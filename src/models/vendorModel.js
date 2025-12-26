@@ -1,23 +1,20 @@
 /**
  * Vendor Model - DynamoDB operations for Vendors
+ * Phone-only authentication (no password)
  */
 const { v4: uuidv4 } = require('uuid');
-const bcrypt = require('bcryptjs');
 const { docClient, TABLES } = require('../config/aws');
 const { PutCommand, GetCommand, QueryCommand, UpdateCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
 
-// Create a new vendor
+// Create a new vendor (phone-only, no password)
 const createVendor = async (vendorData) => {
     const id = uuidv4();
-    const hashedPassword = await bcrypt.hash(vendorData.password, 10);
     
     const vendor = {
         id,
         businessName: vendorData.businessName,
         ownerName: vendorData.ownerName,
         phone: vendorData.phone,
-        email: vendorData.email || '',
-        password: hashedPassword,
         isVerified: false,
         subscriptionPlan: 'free',
         profileImage: vendorData.profileImage || '',
@@ -33,9 +30,7 @@ const createVendor = async (vendorData) => {
         ConditionExpression: 'attribute_not_exists(id)'
     }));
 
-    // Return vendor without password
-    const { password, ...vendorWithoutPassword } = vendor;
-    return vendorWithoutPassword;
+    return vendor;
 };
 
 // Find vendor by phone
@@ -70,7 +65,7 @@ const updateVendor = async (id, updates) => {
 
     // Build update expression dynamically
     Object.keys(updates).forEach((key, index) => {
-        if (key !== 'id' && key !== 'password') {
+        if (key !== 'id') {
             const attrName = `#attr${index}`;
             const attrValue = `:val${index}`;
             updateExpressions.push(`${attrName} = ${attrValue}`);
@@ -96,35 +91,9 @@ const updateVendor = async (id, updates) => {
     return result.Attributes;
 };
 
-// Verify password
-const verifyPassword = async (plainPassword, hashedPassword) => {
-    return bcrypt.compare(plainPassword, hashedPassword);
-};
-
-// Change password
-const changePassword = async (id, newPassword) => {
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
-    await docClient.send(new UpdateCommand({
-        TableName: TABLES.VENDORS,
-        Key: { id },
-        UpdateExpression: 'SET #password = :password, #updatedAt = :updatedAt',
-        ExpressionAttributeNames: {
-            '#password': 'password',
-            '#updatedAt': 'updatedAt'
-        },
-        ExpressionAttributeValues: {
-            ':password': hashedPassword,
-            ':updatedAt': new Date().toISOString()
-        }
-    }));
-};
-
 module.exports = {
     createVendor,
     findVendorByPhone,
     findVendorById,
-    updateVendor,
-    verifyPassword,
-    changePassword
+    updateVendor
 };

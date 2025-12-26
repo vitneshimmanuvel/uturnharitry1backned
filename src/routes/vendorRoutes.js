@@ -1,21 +1,22 @@
 /**
  * Vendor Routes - Registration, Login, Profile management
+ * Phone-only authentication (no password)
  */
 const express = require('express');
 const router = express.Router();
-const { createVendor, findVendorByPhone, findVendorById, updateVendor, verifyPassword } = require('../models/vendorModel');
+const { createVendor, findVendorByPhone, findVendorById, updateVendor } = require('../models/vendorModel');
 const { generateToken, authMiddleware, vendorOnly } = require('../middleware/auth');
 
-// Register new vendor
+// Register new vendor (phone-only, no password)
 router.post('/register', async (req, res) => {
     try {
-        const { businessName, ownerName, phone, email, password } = req.body;
+        const { businessName, ownerName, phone } = req.body;
 
-        // Validate required fields
-        if (!businessName || !ownerName || !phone || !password) {
+        // Validate required fields (no password needed)
+        if (!businessName || !ownerName || !phone) {
             return res.status(400).json({
                 success: false,
-                message: 'Business name, owner name, phone, and password are required'
+                message: 'Business name, owner name, and phone are required'
             });
         }
 
@@ -28,13 +29,11 @@ router.post('/register', async (req, res) => {
             });
         }
 
-        // Create vendor
+        // Create vendor (no password)
         const vendor = await createVendor({
             businessName,
             ownerName,
-            phone,
-            email,
-            password
+            phone
         });
 
         // Generate token
@@ -62,34 +61,26 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// Vendor login
+// Vendor login (phone-only, no password)
 router.post('/login', async (req, res) => {
     try {
-        const { phone, password } = req.body;
+        const { phone } = req.body;
 
         // Validate required fields
-        if (!phone || !password) {
+        if (!phone) {
             return res.status(400).json({
                 success: false,
-                message: 'Phone and password are required'
+                message: 'Phone number is required'
             });
         }
 
         // Find vendor by phone
         const vendor = await findVendorByPhone(phone);
         if (!vendor) {
+            // Auto-register if not found (for seamless experience)
             return res.status(401).json({
                 success: false,
-                message: 'Invalid phone number or password'
-            });
-        }
-
-        // Verify password
-        const isValidPassword = await verifyPassword(password, vendor.password);
-        if (!isValidPassword) {
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid phone number or password'
+                message: 'Phone number not registered. Please register first.'
             });
         }
 
@@ -100,14 +91,11 @@ router.post('/login', async (req, res) => {
             userType: 'vendor'
         });
 
-        // Remove password from response
-        const { password: _, ...vendorData } = vendor;
-
         res.json({
             success: true,
             message: 'Login successful',
             data: {
-                vendor: vendorData,
+                vendor,
                 token
             }
         });
@@ -133,12 +121,9 @@ router.get('/profile', authMiddleware, vendorOnly, async (req, res) => {
             });
         }
 
-        // Remove password from response
-        const { password, ...vendorData } = vendor;
-
         res.json({
             success: true,
-            data: vendorData
+            data: vendor
         });
     } catch (error) {
         console.error('Get profile error:', error);
@@ -157,18 +142,14 @@ router.put('/profile', authMiddleware, vendorOnly, async (req, res) => {
         
         // Don't allow updating sensitive fields
         delete updates.id;
-        delete updates.password;
         delete updates.phone;
 
         const updatedVendor = await updateVendor(req.user.id, updates);
-        
-        // Remove password from response
-        const { password, ...vendorData } = updatedVendor;
 
         res.json({
             success: true,
             message: 'Profile updated successfully',
-            data: vendorData
+            data: updatedVendor
         });
     } catch (error) {
         console.error('Update profile error:', error);
