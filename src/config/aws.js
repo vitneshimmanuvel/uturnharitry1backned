@@ -36,15 +36,24 @@ const s3Client = new S3Client(awsConfig);
 const TABLES = {
   VENDORS: "uturn-vendors",
   DRIVERS: "uturn-drivers",
+  vendors: "uturn-vendors",
+  drivers: "uturn-drivers",
+  bookings: "uturn-bookings",
 };
+
+// Alias for TABLE_NAMES
+const TABLE_NAMES = TABLES;
 
 // S3 Bucket
 const S3_BUCKET = process.env.S3_BUCKET_NAME || "uturn-documents";
 
 module.exports = {
   docClient,
+  dynamoDb: dynamoClient, // Alias for backward compatibility
+  dynamoClient,
   s3Client,
   TABLES,
+  TABLE_NAMES, // Alias
   S3_BUCKET,
   awsConfig,
 };
