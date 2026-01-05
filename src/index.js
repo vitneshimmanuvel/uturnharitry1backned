@@ -10,6 +10,7 @@ const cors = require('cors');
 const vendorRoutes = require('./routes/vendorRoutes');
 const driverRoutes = require('./routes/driverRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const mapsRoutes = require('./routes/mapsRoutes');
 
 // Import database setup
 const { setupTables } = require('./utils/dbSetup');
@@ -41,6 +42,7 @@ app.get('/health', (req, res) => {
 app.use('/api/vendor', vendorRoutes);
 app.use('/api/driver', driverRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/maps', mapsRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

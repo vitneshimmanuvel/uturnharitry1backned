@@ -7,6 +7,32 @@ const router = express.Router();
 const { createVendor, findVendorByPhone, findVendorById, updateVendor } = require('../models/vendorModel');
 const { generateToken, authMiddleware, vendorOnly } = require('../middleware/auth');
 
+// Check if phone number is already registered (real-time validation)
+router.post('/check-phone', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        
+        if (!phone || phone.length < 10) {
+            return res.json({ 
+                success: true, 
+                available: false, 
+                message: 'Enter valid 10-digit phone number' 
+            });
+        }
+
+        const existingVendor = await findVendorByPhone(phone);
+        
+        res.json({
+            success: true,
+            available: !existingVendor,
+            exists: !!existingVendor,
+            message: existingVendor ? 'Phone number already registered' : 'Phone number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Register new vendor (phone-only, no password)
 router.post('/register', async (req, res) => {
     try {

@@ -16,6 +16,32 @@ const {
 const { generateToken, authMiddleware, driverOnly } = require('../middleware/auth');
 const { getUploadUrl } = require('../services/s3Service');
 
+// Check if phone number is already registered (real-time validation)
+router.post('/check-phone', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        
+        if (!phone || phone.length < 10) {
+            return res.json({ 
+                success: true, 
+                available: false, 
+                message: 'Enter valid 10-digit phone number' 
+            });
+        }
+
+        const existingDriver = await findDriverByPhone(phone);
+        
+        res.json({
+            success: true,
+            available: !existingDriver,
+            exists: !!existingDriver,
+            message: existingDriver ? 'Phone number already registered' : 'Phone number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Register new driver - SIMPLIFIED (Name + Phone Only)
 router.post('/register', async (req, res) => {
     try {
