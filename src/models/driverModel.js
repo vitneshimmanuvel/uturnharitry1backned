@@ -31,7 +31,6 @@ const createDriver = async (driverData) => {
         homeLocation: driverData.homeLocation || null,
         
         // For acting drivers
-        experienceYears: driverData.experienceYears || null,
         preferredVehicles: driverData.preferredVehicles || [],
         
         // Documents (URLs) - optional, can be uploaded later

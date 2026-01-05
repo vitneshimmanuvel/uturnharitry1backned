@@ -55,7 +55,6 @@ router.post('/register', async (req, res) => {
             vehicleType,
             vehicleBrand,
             vehicleModel,
-            experienceYears,
             preferredVehicles
         } = req.body;
 
@@ -86,7 +85,6 @@ router.post('/register', async (req, res) => {
             vehicleType,
             vehicleBrand,
             vehicleModel,
-            experienceYears,
             preferredVehicles
         });
 
