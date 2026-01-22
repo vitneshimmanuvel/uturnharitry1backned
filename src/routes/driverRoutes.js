@@ -230,4 +230,35 @@ router.get('/online', authMiddleware, async (req, res) => {
     }
 });
 
+// Get available rides for driver
+router.get('/rides/available', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { getNearbyBookings } = require('../models/bookingModel');
+        const driver = await findDriverById(req.user.id);
+        
+        if (!driver) {
+            return res.status(404).json({ success: false, message: 'Driver not found' });
+        }
+
+        // Use driver's home location as city filter (Simple implementation)
+        // Ideally should accept query params for current location
+        const city = driver.homeLocation || 'Chennai'; 
+        const vehicleType = driver.vehicleType || 'Sedan';
+
+        const rides = await getNearbyBookings(city, vehicleType);
+        
+        res.json({
+            success: true,
+            data: { rides }
+        });
+    } catch (error) {
+        console.error('Get available rides error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to fetch available rides', 
+            error: error.message 
+        });
+    }
+});
+
 module.exports = router;

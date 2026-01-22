@@ -26,11 +26,12 @@ const getAccessToken = async () => {
         }
 
         const response = await axios.post(
-            `${OLA_MAPS_CONFIG.baseUrl}/oauth2/token`,
+            `https://account.olamaps.io/realms/olamaps/protocol/openid-connect/token`,
             new URLSearchParams({
                 grant_type: 'client_credentials',
                 client_id: OLA_MAPS_CONFIG.clientId,
-                client_secret: OLA_MAPS_CONFIG.clientSecret
+                client_secret: OLA_MAPS_CONFIG.clientSecret,
+                scope: 'openid email profile offline_access roles'
             }),
             {
                 headers: {
@@ -60,8 +61,9 @@ const getDirections = async (origin, destination, mode = 'driving') => {
     try {
         const token = await getAccessToken();
         
-        const response = await axios.get(
+        const response = await axios.post(
             `${OLA_MAPS_CONFIG.baseUrl}/routing/v1/directions`,
+            {}, // Empty body
             {
                 params: {
                     origin: `${origin.lat},${origin.lng}`,
@@ -77,20 +79,67 @@ const getDirections = async (origin, destination, mode = 'driving') => {
 
         const route = response.data.routes?.[0];
         if (route) {
+            // Extract polyline - handle both string and object formats
+            let polyline = null;
+            if (route.overview_polyline) {
+                // Could be a string directly or an object with 'points' property
+                if (typeof route.overview_polyline === 'string') {
+                    polyline = route.overview_polyline;
+                } else if (route.overview_polyline.points) {
+                    polyline = route.overview_polyline.points;
+                } else {
+                    // Try to stringify if it's a different format
+                    polyline = JSON.stringify(route.overview_polyline);
+                }
+            }
+            
+            console.log('Ola Maps API returned polyline:', polyline ? 'YES (' + polyline.length + ' chars)' : 'NO');
+            
             return {
                 distance: route.legs?.[0]?.distance?.value / 1000, // in km
                 duration: route.legs?.[0]?.duration?.value / 60, // in minutes
-                polyline: route.overview_polyline?.points,
+                polyline: polyline,
                 steps: route.legs?.[0]?.steps || []
             };
         }
         
-        return null;
+        // Fallback to Haversine calculation
+        console.log('No route found in response, using Haversine fallback');
+        return calculateHaversineRoute(origin, destination);
     } catch (error) {
         console.error('Error getting directions:', error.message);
-        throw error;
+        // Fallback to Haversine distance calculation
+        return calculateHaversineRoute(origin, destination);
     }
 };
+
+/**
+ * Calculate distance using Haversine formula (fallback when API unavailable)
+ */
+const calculateHaversineRoute = (origin, destination) => {
+    const R = 6371; // Earth's radius in km
+    const dLat = toRad(destination.lat - origin.lat);
+    const dLng = toRad(destination.lng - origin.lng);
+    const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(origin.lat)) * Math.cos(toRad(destination.lat)) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+    
+    // Estimate duration based on average speed of 30 km/h for city driving
+    const duration = (distance / 30) * 60; // in minutes
+    
+    return {
+        distance: Math.round(distance * 10) / 10,
+        duration: Math.round(duration),
+        polyline: null,
+        steps: [],
+        isFallback: true
+    };
+};
+
+const toRad = (deg) => deg * (Math.PI / 180);
 
 /**
  * Get distance and duration between two points

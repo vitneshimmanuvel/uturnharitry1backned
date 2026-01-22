@@ -103,10 +103,65 @@ const createDriversTable = async () => {
     }
 };
 
+// Create Bookings table
+const createBookingsTable = async () => {
+    const params = {
+        TableName: 'UTurnBookings',
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' },
+            { AttributeName: 'vendorId', AttributeType: 'S' },
+            { AttributeName: 'assignedDriverId', AttributeType: 'S' }
+        ],
+        GlobalSecondaryIndexes: [
+            {
+                IndexName: 'vendorId-index',
+                KeySchema: [
+                    { AttributeName: 'vendorId', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            },
+            {
+                IndexName: 'assignedDriverId-index',
+                KeySchema: [
+                    { AttributeName: 'assignedDriverId', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table UTurnBookings created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table UTurnBookings already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
 // Setup all tables
 const setupTables = async () => {
     const vendorExists = await tableExists(TABLES.VENDORS);
     const driverExists = await tableExists(TABLES.DRIVERS);
+    const bookingsExists = await tableExists('UTurnBookings');
 
     if (!vendorExists) {
         await createVendorsTable();
@@ -119,6 +174,87 @@ const setupTables = async () => {
     } else {
         console.log(`ℹ️ Table ${TABLES.DRIVERS} already exists`);
     }
+    
+    if (!bookingsExists) {
+        await createBookingsTable();
+    } else {
+        console.log(`ℹ️ Table UTurnBookings already exists`);
+    }
+    
+    // Create Wallet table
+    const walletExists = await tableExists('UTurnWallet');
+    if (!walletExists) {
+        await createWalletTable();
+    } else {
+        console.log(`ℹ️ Table UTurnWallet already exists`);
+    }
+    
+    // Create Referrals table
+    const referralsExists = await tableExists('UTurnReferrals');
+    if (!referralsExists) {
+        await createReferralsTable();
+    } else {
+        console.log(`ℹ️ Table UTurnReferrals already exists`);
+    }
+};
+
+// Create Wallet table
+const createWalletTable = async () => {
+    const { CreateTableCommand } = require('@aws-sdk/client-dynamodb');
+    const params = {
+        TableName: 'UTurnWallet',
+        KeySchema: [
+            { AttributeName: 'vendorId', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'vendorId', AttributeType: 'S' }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table UTurnWallet created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table UTurnWallet already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Create Referrals table
+const createReferralsTable = async () => {
+    const { CreateTableCommand } = require('@aws-sdk/client-dynamodb');
+    const params = {
+        TableName: 'UTurnReferrals',
+        KeySchema: [
+            { AttributeName: 'vendorId', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'vendorId', AttributeType: 'S' }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table UTurnReferrals created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table UTurnReferrals already exists`);
+        } else {
+            throw error;
+        }
+    }
 };
 
 module.exports = { setupTables };
+

@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UTurn - Ride Tracking</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ed 100%);
+        min-height: 100vh;
+      }
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+
+      /* Header */
+      .header {
+        background: linear-gradient(135deg, #ffd700 0%, #f5c400 100%);
+        padding: 20px;
+        border-radius: 16px;
+        text-align: center;
+        margin-bottom: 16px;
+        box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+      }
+      .header h1 {
+        font-size: 24px;
+        color: #1a1a2e;
+      }
+      .header p {
+        color: #333;
+        font-size: 14px;
+        margin-top: 4px;
+      }
+      .booking-id {
+        background: rgba(0, 0, 0, 0.1);
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        display: inline-block;
+        margin-top: 8px;
+      }
+
+      /* Status Badge */
+      .status-badge {
+        display: inline-block;
+        padding: 8px 16px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 14px;
+        margin: 16px 0;
+      }
+      .status-pending {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .status-driver_assigned {
+        background: #d4edda;
+        color: #155724;
+      }
+      .status-in_transit {
+        background: #cce5ff;
+        color: #004085;
+      }
+      .status-completed {
+        background: #d1ecf1;
+        color: #0c5460;
+      }
+      .status-cancelled {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      /* Cards */
+      .card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+      }
+      .card-title {
+        font-size: 12px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 12px;
+      }
+
+      /* Map */
+      #map {
+        height: 200px;
+        border-radius: 12px;
+      }
+
+      /* Route */
+      .route-container {
+        position: relative;
+        padding-left: 24px;
+      }
+      .route-line {
+        position: absolute;
+        left: 5px;
+        top: 24px;
+        bottom: 24px;
+        width: 2px;
+        background: #ddd;
+      }
+      .location {
+        position: relative;
+        padding: 8px 0;
+      }
+      .location-dot {
+        position: absolute;
+        left: -22px;
+        top: 12px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+      .pickup-dot {
+        background: #4caf50;
+      }
+      .drop-dot {
+        background: #f44336;
+      }
+      .location-label {
+        font-size: 10px;
+        color: #888;
+        text-transform: uppercase;
+      }
+      .location-address {
+        font-size: 14px;
+        color: #333;
+        margin-top: 2px;
+      }
+
+      /* Driver Card */
+      .driver-card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .driver-avatar {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #ffd700 0%, #f5c400 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: #1a1a2e;
+        font-weight: bold;
+      }
+      .driver-info h3 {
+        font-size: 18px;
+        color: #333;
+      }
+      .driver-info p {
+        font-size: 13px;
+        color: #888;
+        margin-top: 2px;
+      }
+      .vehicle-badge {
+        display: inline-block;
+        background: #f0f0f5;
+        padding: 4px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        color: #555;
+        margin-top: 4px;
+      }
+
+      /* Timing */
+      .timing-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .timing-item {
+        background: #f8f9fe;
+        padding: 12px;
+        border-radius: 10px;
+        text-align: center;
+      }
+      .timing-value {
+        font-size: 20px;
+        font-weight: bold;
+        color: #333;
+      }
+      .timing-label {
+        font-size: 11px;
+        color: #888;
+        margin-top: 4px;
+      }
+
+      /* Fare */
+      .fare-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #f0f0f5;
+      }
+      .fare-row:last-child {
+        border-bottom: none;
+      }
+      .fare-row.total {
+        font-weight: bold;
+        font-size: 18px;
+        color: #4caf50;
+      }
+
+      /* Loading */
+      .loading {
+        text-align: center;
+        padding: 60px 20px;
+      }
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #ffd700;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 16px;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Error */
+      .error {
+        text-align: center;
+        padding: 60px 20px;
+        color: #721c24;
+      }
+      .error-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+      }
+
+      /* Footer */
+      .footer {
+        text-align: center;
+        padding: 20px;
+        color: #888;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Loading State -->
+      <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Loading ride details...</p>
+      </div>
+
+      <!-- Error State -->
+      <div id="error" class="error" style="display: none">
+        <div class="error-icon">🚫</div>
+        <h2>Ride Not Found</h2>
+        <p>This tracking link may be invalid or expired.</p>
+      </div>
+
+      <!-- Content -->
+      <div id="content" style="display: none">
+        <!-- Header -->
+        <div class="header">
+          <h1>🚗 UTurn Ride</h1>
+          <p>Your ride details</p>
+          <span class="booking-id" id="bookingId">--</span>
+        </div>
+
+        <!-- Status -->
+        <div style="text-align: center">
+          <span class="status-badge" id="statusBadge">Loading...</span>
+        </div>
+
+        <!-- Closed Ride Banner -->
+        <div id="closedBanner" class="card" style="display: none; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); text-align: center;">
+          <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
+          <h2 style="color: #2e7d32; margin-bottom: 8px;" id="closedTitle">Ride Completed!</h2>
+          <p style="color: #388e3c;" id="closedMessage">Thank you for traveling with UTurn!</p>
+        </div>
+
+        <!-- Map -->
+        <div class="card">
+          <div class="card-title">Route Map</div>
+          <div id="map"></div>
+        </div>
+
+        <!-- Route Details -->
+        <div class="card">
+          <div class="card-title">Trip Route</div>
+          <div class="route-container">
+            <div class="route-line"></div>
+            <div class="location">
+              <div class="location-dot pickup-dot"></div>
+              <div class="location-label">Pickup</div>
+              <div class="location-address" id="pickupAddress">--</div>
+            </div>
+            <div class="location">
+              <div class="location-dot drop-dot"></div>
+              <div class="location-label">Drop</div>
+              <div class="location-address" id="dropAddress">--</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Driver Card -->
+        <div class="card" id="driverCard" style="display: none">
+          <div class="card-title">Your Driver</div>
+          <div class="driver-card">
+            <div class="driver-avatar" id="driverAvatar">D</div>
+            <div class="driver-info">
+              <h3 id="driverName">Driver Name</h3>
+              <p id="driverPhone">+91 XXXXX XXXXX</p>
+              <span class="vehicle-badge" id="vehicleInfo">TN XX XXXX</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timing -->
+        <div class="card">
+          <div class="card-title">Trip Timing</div>
+          <div class="timing-grid">
+            <div class="timing-item">
+              <div class="timing-value" id="scheduleTime">--</div>
+              <div class="timing-label">Pickup Time</div>
+            </div>
+            <div class="timing-item">
+              <div class="timing-value" id="duration">--</div>
+              <div class="timing-label">Est. Duration</div>
+            </div>
+            <div class="timing-item">
+              <div class="timing-value" id="startTime">--</div>
+              <div class="timing-label">Started</div>
+            </div>
+            <div class="timing-item">
+              <div class="timing-value" id="endTime">--</div>
+              <div class="timing-label">Ended</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fare -->
+        <div class="card">
+          <div class="card-title">Fare Details</div>
+          <div class="fare-row">
+            <span>Distance</span>
+            <span id="distance">-- km</span>
+          </div>
+          <div class="fare-row">
+            <span>Base Fare</span>
+            <span id="baseFare">₹--</span>
+          </div>
+          <div class="fare-row">
+            <span>Waiting Charges</span>
+            <span id="waitingCharges">₹--</span>
+          </div>
+          <div class="fare-row total">
+            <span>Total</span>
+            <span id="totalFare">₹--</span>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+          <p>Powered by UTurn Cab Services</p>
+          <p>© 2026 All Rights Reserved</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Get tracking ID from URL
+      const pathParts = window.location.pathname.split("/");
+      const trackingId = pathParts[pathParts.length - 1];
+
+      // API Base URL - use same origin for both local and production
+      const API_BASE = window.location.origin + "/api";
+
+      let map = null;
+
+      async function loadBooking() {
+        try {
+          const response = await fetch(
+            `${API_BASE}/bookings/track/${trackingId}`
+          );
+          const data = await response.json();
+
+          if (!data.success) {
+            throw new Error("Booking not found");
+          }
+
+          displayBooking(data.data);
+        } catch (error) {
+          console.error("Error:", error);
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("error").style.display = "block";
+        }
+      }
+
+      function displayBooking(booking) {
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("content").style.display = "block";
+
+        // Booking ID
+        document.getElementById("bookingId").textContent = `ID: ${
+          booking.id?.substring(0, 8) || "--"
+        }`;
+
+        // Status
+        const statusBadge = document.getElementById("statusBadge");
+        statusBadge.textContent = formatStatus(booking.status);
+        statusBadge.className = `status-badge status-${booking.status}`;
+
+        // Show closed banner if ride is complete/cancelled
+        if (booking.isClosed) {
+          const banner = document.getElementById("closedBanner");
+          banner.style.display = "block";
+          
+          if (booking.status === "cancelled") {
+            banner.style.background = "linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%)";
+            document.getElementById("closedTitle").textContent = "Ride Cancelled";
+            document.getElementById("closedTitle").style.color = "#c62828";
+            document.getElementById("closedMessage").style.color = "#d32f2f";
+          }
+          
+          if (booking.closedMessage) {
+            document.getElementById("closedMessage").textContent = booking.closedMessage;
+          }
+        }
+
+        // Route
+        document.getElementById("pickupAddress").textContent =
+          booking.pickupAddress || "Pickup Location";
+        document.getElementById("dropAddress").textContent =
+          booking.dropAddress || "Drop Location";
+
+        // Driver (if assigned)
+        if (booking.driverName || booking.driver) {
+          const driverCard = document.getElementById("driverCard");
+          driverCard.style.display = "block";
+
+          const name = booking.driverName || booking.driver?.name || "Driver";
+          document.getElementById("driverName").textContent = name;
+          document.getElementById("driverAvatar").textContent = name
+            .charAt(0)
+            .toUpperCase();
+          document.getElementById("driverPhone").textContent = maskPhone(
+            booking.driverPhone || booking.driver?.phone
+          );
+          document.getElementById("vehicleInfo").textContent =
+            booking.vehicleNumber || booking.vehicleType || "Sedan";
+        }
+
+        // Timing
+        document.getElementById("scheduleTime").textContent =
+          booking.scheduleTime || "ASAP";
+        document.getElementById("duration").textContent = `${
+          booking.estimatedDurationMins || "--"
+        } min`;
+        document.getElementById("startTime").textContent =
+          formatTime(booking.startTime) || "--";
+        document.getElementById("endTime").textContent =
+          formatTime(booking.endTime) || "--";
+
+        // Fare
+        document.getElementById("distance").textContent = `${
+          booking.distanceKm?.toFixed(1) || "--"
+        } km`;
+        document.getElementById("baseFare").textContent = `₹${
+          booking.packageAmount || booking.estimatedFare || "--"
+        }`;
+        document.getElementById("waitingCharges").textContent = `₹${
+          booking.waitingCharges || 0
+        }`;
+        document.getElementById("totalFare").textContent = `₹${
+          booking.totalAmount ||
+          booking.packageAmount ||
+          booking.estimatedFare ||
+          "--"
+        }`;
+
+        // Initialize map
+        initMap(booking);
+      }
+
+      function initMap(booking) {
+        const pickup = booking.pickupLocation;
+        const drop = booking.dropLocation;
+
+        const defaultCenter = [13.0827, 80.2707]; // Chennai
+        const center = pickup ? [pickup.lat, pickup.lng] : defaultCenter;
+
+        map = L.map("map").setView(center, 12);
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+        }).addTo(map);
+
+        const bounds = [];
+
+        // Pickup marker
+        if (pickup) {
+          L.marker([pickup.lat, pickup.lng], {
+            icon: L.divIcon({
+              className: "marker",
+              html: '<div style="background:#4CAF50;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>',
+              iconSize: [20, 20],
+              iconAnchor: [10, 10],
+            }),
+          }).addTo(map);
+          bounds.push([pickup.lat, pickup.lng]);
+        }
+
+        // Drop marker
+        if (drop) {
+          L.marker([drop.lat, drop.lng], {
+            icon: L.divIcon({
+              className: "marker",
+              html: '<div style="background:#F44336;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3)"></div>',
+              iconSize: [20, 20],
+              iconAnchor: [10, 10],
+            }),
+          }).addTo(map);
+          bounds.push([drop.lat, drop.lng]);
+        }
+
+        // Fit bounds first
+        if (bounds.length >= 2) {
+          map.fitBounds(bounds, { padding: [30, 30] });
+        }
+
+        // Fetch route from Ola Maps via backend
+        if (pickup && drop) {
+          fetchOlaRoute(pickup, drop);
+        }
+      }
+
+      // Fetch route polyline from Ola Maps backend
+      async function fetchOlaRoute(pickup, drop) {
+        try {
+          const response = await fetch(
+            `${API_BASE}/maps/directions?origin=${pickup.lat},${pickup.lng}&destination=${drop.lat},${drop.lng}`
+          );
+          const data = await response.json();
+          
+          if (data.success && data.data?.polyline) {
+            // Decode and draw polyline
+            const coords = decodePolyline(data.data.polyline);
+            if (coords.length > 0) {
+              L.polyline(coords, { 
+                color: '#FFD700', 
+                weight: 5,
+                opacity: 0.9 
+              }).addTo(map);
+              map.fitBounds(coords, { padding: [30, 30] });
+            }
+          }
+        } catch (error) {
+          console.log('Route fetch optional:', error);
+        }
+      }
+
+      // Decode Google-style polyline
+      function decodePolyline(encoded) {
+        if (!encoded) return [];
+        const points = [];
+        let index = 0, lat = 0, lng = 0;
+        while (index < encoded.length) {
+          let b, shift = 0, result = 0;
+          do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+          lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+          shift = 0; result = 0;
+          do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+          lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+          points.push([lat / 1e5, lng / 1e5]);
+        }
+        return points;
+      }
+
+      function formatStatus(status) {
+        const statusMap = {
+          pending: "⏳ Pending",
+          driver_assigned: "✅ Driver Assigned",
+          driver_approved: "🚗 Driver Approved",
+          in_transit: "🛣️ In Transit",
+          completed: "✔️ Completed",
+          cancelled: "❌ Cancelled",
+        };
+        return statusMap[status] || status;
+      }
+
+      function maskPhone(phone) {
+        if (!phone) return "+91 XXXXX XXXXX";
+        return phone.replace(/(\d{2})(\d{5})(\d{3})/, "$1 XXXXX $3");
+      }
+
+      function formatTime(timestamp) {
+        if (!timestamp) return null;
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      // Load on page ready
+      loadBooking();
+    </script>
+  </body>
+</html>

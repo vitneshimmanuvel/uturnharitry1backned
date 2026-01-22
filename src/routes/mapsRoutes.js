@@ -234,16 +234,44 @@ router.post('/route-info', async (req, res) => {
             return res.status(400).json({ error: 'Pickup and drop locations are required' });
         }
 
-        // Get directions
+        // Get directions (will use Haversine fallback if API fails)
         const directions = await olaMapsService.getDirections(pickup, drop);
         
         if (!directions) {
-            return res.status(404).json({ error: 'No route found' });
+            // Final fallback - calculate manually
+            const distance = calculateHaversineDistance(pickup, drop);
+            const fare = olaMapsService.calculateFare(distance, vehicleType, tripType);
+            
+            return res.json({
+                success: true,
+                data: {
+                    distance: distance,
+                    duration: Math.round(distance * 2), // Estimate 2 min per km
+                    polyline: null,
+                    fare,
+                    vehicleType,
+                    tripType,
+                    pickupCity: null,
+                    dropCity: null,
+                    pickupAddress: `${pickup.lat.toFixed(4)}, ${pickup.lng.toFixed(4)}`,
+                    dropAddress: `${drop.lat.toFixed(4)}, ${drop.lng.toFixed(4)}`,
+                    isFallback: true
+                }
+            });
         }
 
-        // Get city from pickup location
-        const pickupDetails = await olaMapsService.reverseGeocode(pickup.lat, pickup.lng);
-        const dropDetails = await olaMapsService.reverseGeocode(drop.lat, drop.lng);
+        // Try to get city info (but don't fail if this errors)
+        let pickupDetails = null, dropDetails = null;
+        try {
+            pickupDetails = await olaMapsService.reverseGeocode(pickup.lat, pickup.lng);
+        } catch (e) {
+            console.log('Pickup reverseGeocode failed, using coordinates');
+        }
+        try {
+            dropDetails = await olaMapsService.reverseGeocode(drop.lat, drop.lng);
+        } catch (e) {
+            console.log('Drop reverseGeocode failed, using coordinates');
+        }
 
         // Calculate fare
         const fare = olaMapsService.calculateFare(directions.distance, vehicleType, tripType);
@@ -259,14 +287,51 @@ router.post('/route-info', async (req, res) => {
                 tripType,
                 pickupCity: pickupDetails?.city || null,
                 dropCity: dropDetails?.city || null,
-                pickupAddress: pickupDetails?.formattedAddress || null,
-                dropAddress: dropDetails?.formattedAddress || null
+                pickupAddress: pickupDetails?.formattedAddress || `${pickup.lat.toFixed(4)}, ${pickup.lng.toFixed(4)}`,
+                dropAddress: dropDetails?.formattedAddress || `${drop.lat.toFixed(4)}, ${drop.lng.toFixed(4)}`,
+                isFallback: directions.isFallback || false
             }
         });
     } catch (error) {
-        console.error('Route info error:', error);
-        res.status(500).json({ error: 'Failed to get route info' });
+        console.error('Route info error:', error.message);
+        
+        // Ultimate fallback - return calculated distance
+        try {
+            const { pickup, drop, vehicleType = 'Sedan', tripType = 'drop' } = req.body;
+            const distance = calculateHaversineDistance(pickup, drop);
+            const fare = olaMapsService.calculateFare(distance, vehicleType, tripType);
+            
+            res.json({
+                success: true,
+                data: {
+                    distance: distance,
+                    duration: Math.round(distance * 2),
+                    polyline: null,
+                    fare,
+                    vehicleType,
+                    tripType,
+                    pickupCity: null,
+                    dropCity: null,
+                    isFallback: true
+                }
+            });
+        } catch (fallbackError) {
+            res.status(500).json({ error: 'Failed to get route info' });
+        }
     }
 });
+
+// Haversine distance calculation helper
+function calculateHaversineDistance(origin, destination) {
+    const R = 6371; // Earth's radius in km
+    const dLat = (destination.lat - origin.lat) * Math.PI / 180;
+    const dLng = (destination.lng - origin.lng) * Math.PI / 180;
+    const a = 
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(origin.lat * Math.PI / 180) * Math.cos(destination.lat * Math.PI / 180) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c * 10) / 10;
+}
 
 module.exports = router;

@@ -5,12 +5,14 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 // Import routes
 const vendorRoutes = require('./routes/vendorRoutes');
 const driverRoutes = require('./routes/driverRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const mapsRoutes = require('./routes/mapsRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
 
 // Import database setup
 const { setupTables } = require('./utils/dbSetup');
@@ -38,11 +40,17 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Serve tracking page for any /track/:id URL
+app.get('/track/:trackingId', (req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'trackingPage.html'));
+});
+
 // API Routes
 app.use('/api/vendor', vendorRoutes);
 app.use('/api/driver', driverRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/maps', mapsRoutes);
+app.use('/api/bookings', bookingRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
