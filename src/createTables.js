@@ -17,6 +17,7 @@ const client = new DynamoDBClient({
 
 const VENDORS_TABLE = 'uturn-vendors';
 const DRIVERS_TABLE = 'uturn-drivers';
+const BOOKINGS_TABLE = 'uturn-bookings';
 
 // Check if table exists
 async function tableExists(tableName) {
@@ -99,6 +100,52 @@ async function createDriversTable() {
     console.log(`✅ Table ${DRIVERS_TABLE} created successfully!`);
 }
 
+// Create Bookings Table
+async function createBookingsTable() {
+    const params = {
+        TableName: BOOKINGS_TABLE,
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' },
+            { AttributeName: 'vendorId', AttributeType: 'S' },
+            { AttributeName: 'status', AttributeType: 'S' }
+        ],
+        GlobalSecondaryIndexes: [
+            {
+                IndexName: 'vendorId-index',
+                KeySchema: [
+                    { AttributeName: 'vendorId', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            },
+            {
+                IndexName: 'status-index',
+                KeySchema: [
+                    { AttributeName: 'status', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    await client.send(new CreateTableCommand(params));
+    console.log(`✅ Table ${BOOKINGS_TABLE} created successfully!`);
+}
+
 // Main function
 async function main() {
     console.log('🔧 DynamoDB Table Creation Script');
@@ -132,6 +179,15 @@ async function main() {
             await createDriversTable();
         }
 
+        // Create Bookings table
+        console.log(`📋 Checking ${BOOKINGS_TABLE}...`);
+        if (await tableExists(BOOKINGS_TABLE)) {
+            console.log(`ℹ️  Table ${BOOKINGS_TABLE} already exists`);
+        } else {
+            console.log(`🔨 Creating ${BOOKINGS_TABLE}...`);
+            await createBookingsTable();
+        }
+
         console.log('\n🎉 All tables are ready!');
         console.log('\nTable structure:');
         console.log('================');
@@ -141,6 +197,9 @@ async function main() {
         console.log(`${DRIVERS_TABLE}:`);
         console.log('  - Primary Key: id (String)');
         console.log('  - GSI: phone-index (phone -> String)');
+        console.log(`${BOOKINGS_TABLE}:`);
+        console.log('  - Primary Key: id (String)');
+        console.log('  - GSI: vendorId-index, status-index');
 
     } catch (error) {
         console.error('\n❌ Error:', error.message);

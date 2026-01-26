@@ -12,7 +12,7 @@ const client = new DynamoDBClient({
 });
 
 const docClient = DynamoDBDocumentClient.from(client);
-const TABLE_NAME = 'UTurnBookings';
+const TABLE_NAME = 'uturn-bookings'; // Must match aws.js config
 
 /**
  * Create a new booking
