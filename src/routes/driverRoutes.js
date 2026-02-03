@@ -240,10 +240,9 @@ router.get('/rides/available', authMiddleware, driverOnly, async (req, res) => {
             return res.status(404).json({ success: false, message: 'Driver not found' });
         }
 
-        // Use driver's home location as city filter (Simple implementation)
-        // Ideally should accept query params for current location
-        const city = driver.homeLocation || 'Chennai'; 
-        const vehicleType = driver.vehicleType || 'Sedan';
+        // Allow query parameters to override driver defaults
+        const city = req.query.city || driver.homeLocation || 'Chennai'; 
+        const vehicleType = req.query.vehicleType || driver.vehicleType || 'Sedan';
 
         const rides = await getNearbyBookings(city, vehicleType);
         
@@ -258,6 +257,17 @@ router.get('/rides/available', authMiddleware, driverOnly, async (req, res) => {
             message: 'Failed to fetch available rides', 
             error: error.message 
         });
+    }
+});
+
+// Get driver by ID
+router.get('/:id', async (req, res) => {
+    try {
+        const driver = await findDriverById(req.params.id);
+        if (!driver) return res.status(404).json({ success: false, message: 'Driver not found' });
+        res.json({ success: true, data: driver });
+    } catch (error) {
+         res.status(500).json({ success: false, message: error.message });
     }
 });
 

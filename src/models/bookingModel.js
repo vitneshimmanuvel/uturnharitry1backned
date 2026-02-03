@@ -1,6 +1,7 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, GetCommand, UpdateCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, ScanCommand, GetCommand, UpdateCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
 const { v4: uuidv4 } = require('uuid');
+const driverModel = require('./driverModel'); // Import to fetch driver details
 
 // DynamoDB Setup
 const client = new DynamoDBClient({
@@ -27,12 +28,20 @@ const createBooking = async (bookingData) => {
         customerName: bookingData.customerName,
         customerLanguage: bookingData.customerLanguage || 'Tamil',
         numberOfPeople: bookingData.numberOfPeople || 1,
+        category: bookingData.category || 'Passenger',
+        loadType: bookingData.loadType,
+        demographics: bookingData.demographics,
         
         // Trip Type: oneWay, roundTrip, localHourly, localDriverAllowance, outstation, tourPackage
         tripType: bookingData.tripType || 'oneWay',
         vehicleType: bookingData.vehicleType,
         vehicleBrand: bookingData.vehicleBrand,
         vehicleModel: bookingData.vehicleModel,
+        
+        // Rental / Outstation Specifics
+        minKmPerDay: bookingData.minKmPerDay,
+        packageId: bookingData.packageId,
+        driverMyBata: bookingData.driverMyBata, // If separate from driverAllowance
         
         // Locations
         pickupLocation: bookingData.pickupLocation, // { lat, lng }
@@ -59,8 +68,10 @@ const createBooking = async (bookingData) => {
         hourlyRate: bookingData.hourlyRate || 0,
         estimatedHours: bookingData.estimatedHours || 0,
         nightAllowance: bookingData.nightAllowance || 0,
+        hillsAllowance: bookingData.hillsAllowance || 0,
         waitingChargesPerHour: bookingData.waitingChargesPerHour || 0,
         extraCharges: bookingData.extraCharges || 0,
+        tollCharges: bookingData.tollCharges || 0,
         driverAllowance: bookingData.driverAllowance || 0,
         vendorCommission: bookingData.vendorCommission || 0,
         packageAmount: bookingData.packageAmount || 0,
@@ -116,17 +127,19 @@ const getBookingById = async (bookingId) => {
 /**
  * Get nearby bookings for drivers (by city)
  */
+/**
+ * Get nearby bookings for drivers (ALL cities)
+ */
 const getNearbyBookings = async (city, vehicleType, status = 'pending') => {
+    // IGNORE city and vehicleType - Show ALL pending bookings
     const result = await docClient.send(new ScanCommand({
         TableName: TABLE_NAME,
-        FilterExpression: '#status = :status AND pickupCity = :city AND vehicleType = :vehicle',
+        FilterExpression: '#status = :status',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
-            ':status': status,
-            ':city': city,
-            ':vehicle': vehicleType
+            ':status': status
         }
     }));
     
@@ -227,16 +240,32 @@ const getDriverBookings = async (driverId, status = null) => {
  * Driver accepts booking
  */
 const acceptBooking = async (bookingId, driverId) => {
+    // 1. Fetch driver details first
+    const driver = await driverModel.findDriverById(driverId);
+    
+    if (!driver) {
+        throw new Error('Driver not found');
+    }
+
+    // 2. Prepare driver info to denormalize into booking
+    // Use selfie as profile pic if available
+    const driverProfilePic = driver.documents?.selfie || null; 
+
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, assignedDriverId = :driverId, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, assignedDriverId = :driverId, driverName = :dName, driverPhone = :dPhone, vehicleNumber = :vNum, vehicleType = :vType, driverProfilePic = :dPic, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': 'driver_accepted',
             ':driverId': driverId,
+            ':dName': driver.name,
+            ':dPhone': driver.phone,
+            ':vNum': driver.vehicleNumber || 'Not Set',
+            ':vType': driver.vehicleType || 'Unknown',
+            ':dPic': driverProfilePic,
             ':now': new Date().toISOString()
         }
     }));
@@ -325,7 +354,7 @@ const generateTripOTP = async (bookingId) => {
 /**
  * Start trip
  */
-const startTrip = async (bookingId, startOdometer, otp) => {
+const startTrip = async (bookingId, startOdometer, otp, startOdometerUrl) => {
     // First verify OTP
     const booking = await getBookingById(bookingId);
     if (!booking) throw new Error('Booking not found');
@@ -334,13 +363,14 @@ const startTrip = async (bookingId, startOdometer, otp) => {
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, startOdometer = :startOdo, startTime = :now, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, startOdometer = :startOdo, startOdometerUrl = :startOdoUrl, startTime = :now, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': 'in_progress',
             ':startOdo': startOdometer,
+            ':startOdoUrl': startOdometerUrl || null,
             ':now': new Date().toISOString()
         }
     }));
@@ -351,13 +381,17 @@ const startTrip = async (bookingId, startOdometer, otp) => {
 /**
  * Update waiting time
  */
-const updateWaitingTime = async (bookingId, waitingTimeMins) => {
+/**
+ * Add to waiting time (Accumulate)
+ */
+const addToWaitingTime = async (bookingId, additionalMinutes) => {
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET waitingTimeMins = :mins, updatedAt = :now',
+        UpdateExpression: 'SET waitingTimeMins = if_not_exists(waitingTimeMins, :zero) + :mins, updatedAt = :now',
         ExpressionAttributeValues: {
-            ':mins': waitingTimeMins,
+            ':mins': additionalMinutes,
+            ':zero': 0,
             ':now': new Date().toISOString()
         }
     }));
@@ -368,7 +402,7 @@ const updateWaitingTime = async (bookingId, waitingTimeMins) => {
 /**
  * Complete trip
  */
-const completeTrip = async (bookingId, endOdometer, paymentMethod) => {
+const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUrl, extraCharges) => {
     const booking = await getBookingById(bookingId);
     if (!booking) throw new Error('Booking not found');
     
@@ -379,34 +413,46 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod) => {
     let totalAmount = booking.baseFare + (actualDistanceKm * booking.perKmRate);
     
     // Add trip type multipliers
-    if (booking.tripType === 'round') totalAmount *= 1.8;
-    else if (booking.tripType === 'rental') totalAmount *= 2.5;
+    if (booking.tripType === 'round') totalAmount *= 1.8; // Example logic, verification needed vs vendor app logic
+    else if (booking.tripType === 'rental') totalAmount *= 2.5; 
     
     // Add waiting charges
     if (booking.waitingTimeMins > 0) {
         const waitingCharges = (booking.waitingChargesPerHour / 60) * booking.waitingTimeMins;
         totalAmount += waitingCharges;
     }
+
+    // Add Extra Charges (Toll, Parking, etc.)
+    const extras = Number(extraCharges) || 0;
+    totalAmount += extras;
     
     totalAmount = Math.round(totalAmount);
     
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, paymentMethod = :method, paymentStatus = :paymentStatus, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :blocked, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': 'completed',
             ':endOdo': endOdometer,
+            ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
+            ':extras': extras, // Save input extra charges
             ':method': paymentMethod,
             ':paymentStatus': 'completed',
+            ':blocked': 'blocked_for_payment', // Block driver until commission paid
             ':now': new Date().toISOString()
         }
     }));
+    
+    // Sync blocking status to Driver entity
+    if (booking.assignedDriverId) {
+        await driverModel.updateDriver(booking.assignedDriverId, { status: 'blocked_for_payment' });
+    }
     
     return await getBookingById(bookingId);
 };
@@ -458,6 +504,52 @@ const updateBooking = async (bookingId, updates) => {
     return await getBookingById(bookingId);
 };
 
+/**
+ * Check if driver has active booking
+ */
+const hasActiveBooking = async (driverId) => {
+    // Fallback to Scan
+    const scanParams = {
+        TableName: TABLE_NAME,
+        FilterExpression: 'assignedDriverId = :driverId AND #status IN (:accepted, :approved, :in_progress)',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':driverId': driverId,
+            ':accepted': 'driver_accepted',
+            ':approved': 'vendor_approved',
+            ':in_progress': 'in_progress'
+        }
+    };
+
+    const result = await docClient.send(new ScanCommand(scanParams));
+    return result.Items && result.Items.length > 0;
+};
+
+const markCommissionPaid = async (bookingId) => {
+    const booking = await getBookingById(bookingId);
+    if (!booking) throw new Error('Booking not found');
+    
+    // 1. Mark booking commission as paid
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId },
+        UpdateExpression: 'SET commissionStatus = :status, updatedAt = :now',
+        ExpressionAttributeValues: {
+            ':status': 'paid',
+            ':now': new Date().toISOString()
+        }
+    }));
+    
+    // 2. Unblock driver (Set status to active)
+    if (booking.assignedDriverId) {
+        await driverModel.updateDriver(booking.assignedDriverId, { status: 'active' });
+    }
+    
+    return await getBookingById(bookingId);
+};
+
 module.exports = {
     createBooking,
     getBookingById,
@@ -475,8 +567,9 @@ module.exports = {
     rejectDriver,
     generateTripOTP,
     startTrip,
-    updateWaitingTime,
+    addToWaitingTime,
     completeTrip,
-    updateBooking
+    updateBooking,
+    hasActiveBooking,
+    markCommissionPaid
 };
-

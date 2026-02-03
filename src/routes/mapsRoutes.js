@@ -1,11 +1,69 @@
 /**
  * Ola Maps Routes
  * API endpoints for maps, directions, places, and geocoding
+ * WITH Redis CACHING + OSRM Fallback for 100% uptime
  */
 
 const express = require('express');
 const router = express.Router();
-const olaMapsService = require('../services/olaMapsService');
+const mapsService = require('../services/mapsService');
+const olaMapsService = require('../services/olaMapsService'); // Legacy, for backward compatibility
+
+/**
+ * GET /api/maps/tiles/:z/:x/:y
+ * Proxy map tiles with Redis caching (24h)
+ * Falls back to OpenStreetMap if Ola Maps fails
+ */
+router.get('/tiles/:z/:x/:y', async (req, res) => {
+    const { z, x, y } = req.params;
+    
+    try {
+        const result = await mapsService.getTile(z, x, y);
+        
+        res.set('Content-Type', 'image/png');
+        res.set('X-Cache', result.source === 'cache' ? 'HIT' : result.source.toUpperCase());
+        res.set('Cache-Control', 'public, max-age=86400');
+        res.send(result.data);
+        
+    } catch (error) {
+        console.error(`Tile error [${z}/${x}/${y}]:`, error.message);
+        res.status(500).send('Map tile unavailable');
+    }
+});
+
+/**
+ * POST /api/maps/directions/cached
+ * Get route directions with Redis caching + OSRM fallback
+ * Body: { origin: {lat, lng}, destination: {lat, lng} }
+ */
+router.post('/directions/cached', async (req, res) => {
+    try {
+        const { origin, destination } = req.body;
+        
+        if (!origin || !destination) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Origin and destination are required' 
+            });
+        }
+        
+        const route = await mapsService.getDirections(origin, destination);
+        
+        res.json({
+            success: true,
+            data: route,
+            provider: route.provider,
+            cached: route.cached || false
+        });
+        
+    } catch (error) {
+        console.error('Cached directions error:', error.message);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Unable to calculate route. Please try again.' 
+        });
+    }
+});
 
 /**
  * GET /api/maps/directions
@@ -223,7 +281,7 @@ router.post('/calculate-fare', async (req, res) => {
 
 /**
  * POST /api/maps/route-info
- * Get complete route information including fare
+ * Get complete route information including fare (WITH CACHING)
  * Body: { pickup: { lat, lng }, drop: { lat, lng }, vehicleType, tripType }
  */
 router.post('/route-info', async (req, res) => {
@@ -234,8 +292,14 @@ router.post('/route-info', async (req, res) => {
             return res.status(400).json({ error: 'Pickup and drop locations are required' });
         }
 
-        // Get directions (will use Haversine fallback if API fails)
-        const directions = await olaMapsService.getDirections(pickup, drop);
+        // Use new mapsService with caching and fallback
+        let directions;
+        try {
+            directions = await mapsService.getDirections(pickup, drop);
+        } catch (e) {
+            console.log('mapsService failed, using haversine fallback');
+            directions = null;
+        }
         
         if (!directions) {
             // Final fallback - calculate manually
@@ -255,20 +319,21 @@ router.post('/route-info', async (req, res) => {
                     dropCity: null,
                     pickupAddress: `${pickup.lat.toFixed(4)}, ${pickup.lng.toFixed(4)}`,
                     dropAddress: `${drop.lat.toFixed(4)}, ${drop.lng.toFixed(4)}`,
-                    isFallback: true
+                    isFallback: true,
+                    provider: 'haversine'
                 }
             });
         }
 
-        // Try to get city info (but don't fail if this errors)
+        // Try to get city info (with caching)
         let pickupDetails = null, dropDetails = null;
         try {
-            pickupDetails = await olaMapsService.reverseGeocode(pickup.lat, pickup.lng);
+            pickupDetails = await mapsService.reverseGeocode(pickup.lat, pickup.lng);
         } catch (e) {
             console.log('Pickup reverseGeocode failed, using coordinates');
         }
         try {
-            dropDetails = await olaMapsService.reverseGeocode(drop.lat, drop.lng);
+            dropDetails = await mapsService.reverseGeocode(drop.lat, drop.lng);
         } catch (e) {
             console.log('Drop reverseGeocode failed, using coordinates');
         }
@@ -287,9 +352,11 @@ router.post('/route-info', async (req, res) => {
                 tripType,
                 pickupCity: pickupDetails?.city || null,
                 dropCity: dropDetails?.city || null,
-                pickupAddress: pickupDetails?.formattedAddress || `${pickup.lat.toFixed(4)}, ${pickup.lng.toFixed(4)}`,
-                dropAddress: dropDetails?.formattedAddress || `${drop.lat.toFixed(4)}, ${drop.lng.toFixed(4)}`,
-                isFallback: directions.isFallback || false
+                pickupAddress: pickupDetails?.address || `${pickup.lat.toFixed(4)}, ${pickup.lng.toFixed(4)}`,
+                dropAddress: dropDetails?.address || `${drop.lat.toFixed(4)}, ${drop.lng.toFixed(4)}`,
+                isFallback: directions.provider !== 'ola',
+                provider: directions.provider,
+                cached: directions.cached || false
             }
         });
     } catch (error) {

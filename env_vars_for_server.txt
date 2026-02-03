@@ -1,0 +1,25 @@
+
+# SERVER ENVIRONMENT VARIABLES
+# Add these to your Vercel (or other host) Environment Variables settings
+
+# AWS (Data Storage)
+AWS_ACCESS_KEY_ID=YOUR_AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_ACCESS_KEY
+AWS_REGION=ap-south-1
+AWS_S3_BUCKET=uturn-documents
+S3_BUCKET_NAME=uturn-documents
+
+# SECURITY
+JWT_SECRET=uturn-secret-key-2024-secure
+
+# GOOGLE MAPS (Required for Locations/Routes)
+GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY
+
+# WHATSAPP (Twilio)
+TWILIO_ACCOUNT_SID=YOUR_TWILIO_ACCOUNT_SID
+TWILIO_AUTH_TOKEN=YOUR_TWILIO_AUTH_TOKEN
+TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
+
+# OPTIONAL / LEGACY
+# REDIS_URL=... (If using Redis)
+# OLA_MAPS_... (Deprecated)

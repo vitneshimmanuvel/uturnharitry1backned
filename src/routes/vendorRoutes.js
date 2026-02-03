@@ -356,10 +356,10 @@ router.post('/trips/:id/publish', authMiddleware, vendorOnly, async (req, res) =
             });
         }
         
-        if (trip.status !== 'draft') {
+        if (trip.status !== 'draft' && trip.status !== 'pending') {
             return res.status(400).json({
                 success: false,
-                message: 'Only draft trips can be published'
+                message: 'Only draft or pending trips can be published'
             });
         }
         

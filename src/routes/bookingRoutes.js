@@ -4,8 +4,10 @@ const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
 const bookingModel = require('../models/bookingModel');
+const driverModel = require('../models/driverModel');
 const videoService = require('../services/videoService');
 const whatsappService = require('../services/whatsappService');
+const s3Service = require('../services/s3Service');
 
 // Generate unique tracking ID
 const generateTrackingId = () => {
@@ -14,8 +16,8 @@ const generateTrackingId = () => {
     return `${prefix}-${random}`;
 };
 
-// Multer configuration for video upload
-const upload = multer({
+// Multer configuration for VIDEO upload
+const videoUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
     fileFilter: (req, file, cb) => {
@@ -23,6 +25,19 @@ const upload = multer({
             cb(null, true);
         } else {
             cb(new Error('Only video files allowed'), false);
+        }
+    }
+});
+
+// Multer configuration for IMAGE upload
+const imageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files allowed'), false);
         }
     }
 });
@@ -35,11 +50,11 @@ router.post('/create', async (req, res) => {
     try {
         const booking = await bookingModel.createBooking(req.body);
         
-        // Send WhatsApp to customer
-        await whatsappService.sendBookingConfirmation(
-            booking.customerPhone,
-            booking
-        );
+        // WhatsApp disabled for now (authentication issue)
+        // await whatsappService.sendBookingConfirmation(
+        //     booking.customerPhone,
+        //     booking
+        // );
         
         res.json({
             success: true,
@@ -61,13 +76,18 @@ router.post('/create', async (req, res) => {
  */
 router.get('/nearby', async (req, res) => {
     try {
-        const { city, vehicleType } = req.query;
+        const { city, vehicleType, driverId } = req.query;
         
-        if (!city || !vehicleType) {
-            return res.status(400).json({
-                success: false,
-                message: 'City and vehicleType required'
-            });
+        // 1. Check if driver is busy (if driverId provided)
+        if (driverId) {
+            const isBusy = await bookingModel.hasActiveBooking(driverId);
+            if (isBusy) {
+                return res.json({
+                    success: true,
+                    data: [], // Return empty list if busy
+                    message: 'You have an active ride'
+                });
+            }
         }
         
         const bookings = await bookingModel.getNearbyBookings(city, vehicleType);
@@ -194,9 +214,9 @@ router.post('/:id/accept', async (req, res) => {
 
 /**
  * POST /api/bookings/:id/upload-video
- * Upload driver verification video
+ * Upload driver video (Driver)
  */
-router.post('/:id/upload-video', upload.single('video'), async (req, res) => {
+router.post('/:id/driver-video', videoUpload.single('video'), async (req, res) => {
     try {
         const { id } = req.params;
         const { driverId } = req.body;
@@ -243,11 +263,15 @@ router.post('/:id/approve-driver', async (req, res) => {
     try {
         const booking = await bookingModel.approveDriver(req.params.id);
         
-        // TODO: Get driver details
+        // Generate OTP for this trip
+        const otp = await bookingModel.generateTripOTP(req.params.id);
+        booking.otp = otp; // Attach to response object for local use/logging
+        
+        // Use actual driver details from booking
         const driverData = {
-            name: 'Driver Name', // Get from driver model
-            phone: '+919876543210',
-            vehicleNumber: 'TN01AB1234'
+            name: booking.driverName || 'Verified Driver',
+            phone: booking.driverPhone || '',
+            vehicleNumber: booking.vehicleNumber || ''
         };
         
         // Send WhatsApp to customer with driver details
@@ -344,11 +368,7 @@ router.post('/:id/generate-otp', async (req, res) => {
     }
 });
 
-/**
- * POST /api/bookings/:id/start-trip
- * Start trip with OTP verification
- */
-router.post('/:id/start-trip', async (req, res) => {
+router.post('/:id/start-trip', imageUpload.single('image'), async (req, res) => {
     try {
         const { startOdometer, otp } = req.body;
         
@@ -358,8 +378,23 @@ router.post('/:id/start-trip', async (req, res) => {
                 message: 'Start odometer and OTP required'
             });
         }
+
+        let startOdometerUrl = null;
+        if (req.file) {
+             const uploadResult = await s3Service.uploadFile(
+                'odometer-photos',
+                `start-${req.params.id}.jpg`,
+                req.file.buffer,
+                req.file.mimetype
+            );
+            startOdometerUrl = uploadResult.publicUrl;
+        } else {
+             // Fallback for testing/web without file
+             // return res.status(400).json({ success: false, message: 'Odometer photo required' });
+             console.warn('No odometer photo uploaded for start-trip');
+        }
         
-        const booking = await bookingModel.startTrip(req.params.id, startOdometer, otp);
+        const booking = await bookingModel.startTrip(req.params.id, startOdometer, otp, startOdometerUrl);
         
         res.json({
             success: true,
@@ -377,27 +412,27 @@ router.post('/:id/start-trip', async (req, res) => {
 
 /**
  * PATCH /api/bookings/:id/waiting-time
- * Update waiting time
+ * Add waiting time (Accumulate)
  */
 router.patch('/:id/waiting-time', async (req, res) => {
     try {
-        const { waitingTimeMins } = req.body;
+        const { additionalMinutes } = req.body;
         
-        if (waitingTimeMins === undefined) {
+        if (additionalMinutes === undefined || additionalMinutes <= 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Waiting time required'
+                message: 'Valid additional minutes required'
             });
         }
         
-        const booking = await bookingModel.updateWaitingTime(req.params.id, waitingTimeMins);
+        const booking = await bookingModel.addToWaitingTime(req.params.id, additionalMinutes);
         
         res.json({
             success: true,
             data: booking
         });
     } catch (error) {
-        console.error('Update waiting time error:', error);
+        console.error('Add waiting time error:', error);
         res.status(500).json({
             success: false,
             message: error.message
@@ -409,9 +444,9 @@ router.patch('/:id/waiting-time', async (req, res) => {
  * POST /api/bookings/:id/complete
  * Complete trip
  */
-router.post('/:id/complete', async (req, res) => {
+router.post('/:id/complete', imageUpload.single('image'), async (req, res) => {
     try {
-        const { endOdometer, paymentMethod } = req.body;
+        const { endOdometer, paymentMethod, extraCharges } = req.body;
         
         if (!endOdometer || !paymentMethod) {
             return res.status(400).json({
@@ -419,8 +454,19 @@ router.post('/:id/complete', async (req, res) => {
                 message: 'End odometer and payment method required'
             });
         }
+
+        let endOdometerUrl = null;
+        if (req.file) {
+             const uploadResult = await s3Service.uploadFile(
+                'odometer-photos',
+                `end-${req.params.id}.jpg`,
+                req.file.buffer,
+                req.file.mimetype
+            );
+            endOdometerUrl = uploadResult.publicUrl;
+        }
         
-        const booking = await bookingModel.completeTrip(req.params.id, endOdometer, paymentMethod);
+        const booking = await bookingModel.completeTrip(req.params.id, endOdometer, paymentMethod, endOdometerUrl, extraCharges);
         
         // Calculate trip data
         const tripData = {
@@ -550,6 +596,28 @@ router.post('/:id/generate-tracking', async (req, res) => {
         });
     } catch (error) {
         console.error('Generate tracking error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/pay-commission
+ * Mark commission as paid and unblock driver
+ */
+router.post('/:id/pay-commission', async (req, res) => {
+    try {
+        const booking = await bookingModel.markCommissionPaid(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Commission marked as paid. Driver unblocked.',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Pay commission error:', error);
         res.status(500).json({
             success: false,
             message: error.message
