@@ -134,12 +134,13 @@ const getNearbyBookings = async (city, vehicleType, status = 'pending') => {
     // IGNORE city and vehicleType - Show ALL pending bookings
     const result = await docClient.send(new ScanCommand({
         TableName: TABLE_NAME,
-        FilterExpression: '#status = :status',
+        FilterExpression: '#status = :status AND vendorId <> :soloVendor',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
-            ':status': status
+            ':status': status,
+            ':soloVendor': 'SOLO_RIDE'
         }
     }));
     
@@ -155,17 +156,34 @@ const getVendorBookings = async (vendorId, status = null) => {
         FilterExpression: 'vendorId = :vendorId',
         ExpressionAttributeValues: {
             ':vendorId': vendorId
-        }
+        },
+        ExpressionAttributeNames: {}
     };
     
     if (status) {
-        params.FilterExpression += ' AND #status = :status';
-        params.ExpressionAttributeNames = { '#status': 'status' };
-        params.ExpressionAttributeValues[':status'] = status;
+        const statuses = status.split(',').map(s => s.trim());
+        if (statuses.length === 1) {
+            params.FilterExpression += ' AND #status = :status';
+            params.ExpressionAttributeNames['#status'] = 'status';
+            params.ExpressionAttributeValues[':status'] = statuses[0];
+        } else {
+            // Handle multiple statuses: #status IN (:s0, :s1, ...)
+            const statusPlaceholders = statuses.map((_, i) => `:status${i}`);
+            params.FilterExpression += ` AND #status IN (${statusPlaceholders.join(', ')})`;
+            params.ExpressionAttributeNames['#status'] = 'status';
+            statuses.forEach((s, i) => {
+                params.ExpressionAttributeValues[`:status${i}`] = s;
+            });
+        }
     }
     
+    // Scan is okay for low volume, but GSI would be better for scale.
+    // Given current requirements, Scan with Filter is acceptable.
     const result = await docClient.send(new ScanCommand(params));
-    return result.Items || [];
+    
+    // Sort by createdAt desc (newest first)
+    const items = result.Items || [];
+    return items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 };
 
 /**
@@ -249,7 +267,8 @@ const acceptBooking = async (bookingId, driverId) => {
 
     // 2. Prepare driver info to denormalize into booking
     // Use selfie as profile pic if available
-    const driverProfilePic = driver.documents?.selfie || null; 
+    // Use selfie as profile pic if available (handle potential undefined structure)
+    const driverProfilePic = (driver.documents && driver.documents.selfie) ? driver.documents.selfie : null; 
 
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
@@ -277,6 +296,14 @@ const acceptBooking = async (bookingId, driverId) => {
  * Upload driver video
  */
 const updateDriverVideo = async (bookingId, videoUrl) => {
+    console.log(`[MODEL] Updating video for booking: '${bookingId}'`);
+    // Check if booking exists first
+    const booking = await getBookingById(bookingId);
+    if (!booking) {
+        console.error(`[MODEL] Booking NOT FOUND for ID: '${bookingId}'`);
+        throw new Error('Booking not found');
+    }
+
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
@@ -358,7 +385,9 @@ const startTrip = async (bookingId, startOdometer, otp, startOdometerUrl) => {
     // First verify OTP
     const booking = await getBookingById(bookingId);
     if (!booking) throw new Error('Booking not found');
-    if (booking.otp !== otp) throw new Error('Invalid OTP');
+    // RELAXED OTP CHECK FOR DEVELOPMENT (User Request)
+    // if (booking.otp !== otp) throw new Error('Invalid OTP');
+    if (!otp || otp.length !== 4) throw new Error('OTP must be 4 digits');
     
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
@@ -428,10 +457,14 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     
     totalAmount = Math.round(totalAmount);
     
+    // Prepare update parameters
+    const isCashPayment = paymentMethod === 'cash';
+    const driverStatus = isCashPayment ? 'blocked_for_payment' : 'active';
+    
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :blocked, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :driverStatus, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
@@ -441,16 +474,16 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
             ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
-            ':extras': extras, // Save input extra charges
+            ':extras': extras,
             ':method': paymentMethod,
-            ':paymentStatus': 'completed',
-            ':blocked': 'blocked_for_payment', // Block driver until commission paid
+            ':paymentStatus': isCashPayment ? 'pending' : 'completed', // Cash = Pending Commission
+            ':driverStatus': driverStatus,
             ':now': new Date().toISOString()
         }
     }));
     
-    // Sync blocking status to Driver entity
-    if (booking.assignedDriverId) {
+    // Sync blocking status to Driver entity if Cash Payment
+    if (booking.assignedDriverId && isCashPayment) {
         await driverModel.updateDriver(booking.assignedDriverId, { status: 'blocked_for_payment' });
     }
     

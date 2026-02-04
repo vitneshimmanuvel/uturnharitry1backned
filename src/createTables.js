@@ -188,6 +188,39 @@ async function main() {
             await createBookingsTable();
         }
 
+        // Create Vehicles table
+        const VEHICLES_TABLE = 'uturn-vehicles';
+        console.log(`📋 Checking ${VEHICLES_TABLE}...`);
+        if (await tableExists(VEHICLES_TABLE)) {
+            console.log(`ℹ️  Table ${VEHICLES_TABLE} already exists`);
+        } else {
+             console.log(`🔨 Creating ${VEHICLES_TABLE}...`);
+             // Inline creation since it's simple
+             await client.send(new CreateTableCommand({
+                 TableName: VEHICLES_TABLE,
+                 KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+                 AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
+                 ProvisionedThroughput: { ReadCapacityUnits: 5, WriteCapacityUnits: 5 }
+             }));
+             console.log('✅ Vehicles table created');
+        }
+
+        // Create Loans table
+        const LOANS_TABLE = 'uturn-loans';
+        console.log(`📋 Checking ${LOANS_TABLE}...`);
+        if (await tableExists(LOANS_TABLE)) {
+            console.log(`ℹ️  Table ${LOANS_TABLE} already exists`);
+        } else {
+             console.log(`🔨 Creating ${LOANS_TABLE}...`);
+             await client.send(new CreateTableCommand({
+                 TableName: LOANS_TABLE,
+                 KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+                 AttributeDefinitions: [{ AttributeName: 'id', AttributeType: 'S' }],
+                 ProvisionedThroughput: { ReadCapacityUnits: 5, WriteCapacityUnits: 5 }
+             }));
+             console.log('✅ Loans table created');
+        }
+
         console.log('\n🎉 All tables are ready!');
         console.log('\nTable structure:');
         console.log('================');

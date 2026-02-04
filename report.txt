@@ -1,0 +1,21 @@
+--- DATA REPORT ---
+
+🔵 PENDING: 0
+
+🟡 DRIVER ACCEPTED: 6
+- ID: c96827d5-e9fa-4029-9620-f8861b62ca66
+  Customer: jacktween (7339121049)
+  Driver: Jakc
+  Route: Coimbatore -> 5/123, Sulur, Tamil Nadu 641402, India
+  Status: driver_accepted
+---
+
+🔴 REJECTED: 0
+
+🟢 APPROVED: 3
+- ID: da16b6cd-b5e4-4b15-ad30-9ff0dd42a90c
+  Customer: Test Customer (8888888888)
+  Driver: Test Driver
+  Route: City X -> City Y
+  Status: vendor_approved
+---

@@ -29,8 +29,7 @@ const uploadDriverVideo = async (fileBuffer, filename, driverId, bookingId) => {
             Bucket: BUCKET_NAME,
             Key: key,
             Body: fileBuffer,
-            ContentType: 'video/mp4', // Assuming MP4, adjust if needed
-            ACL: 'public-read' // Make video publicly accessible
+            ContentType: 'video/mp4' // Assuming MP4, adjust if needed
         });
         
         await s3Client.send(command);

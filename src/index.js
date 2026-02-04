@@ -13,6 +13,8 @@ const driverRoutes = require('./routes/driverRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const mapsRoutes = require('./routes/mapsRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
+const vehicleRoutes = require('./routes/vehicleRoutes');
+const loanRoutes = require('./routes/loanRoutes');
 
 // Import database setup
 const { setupTables } = require('./utils/dbSetup');
@@ -51,6 +53,8 @@ app.use('/api/driver', driverRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/maps', mapsRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/loans', loanRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -73,7 +77,6 @@ app.use((req, res) => {
 // Start server
 const startServer = async () => {
     try {
-        // Try to setup DynamoDB tables - but don't fail if AWS is not configured
         console.log('Attempting to connect to DynamoDB...');
         try {
             await setupTables();

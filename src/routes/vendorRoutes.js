@@ -571,4 +571,101 @@ router.post('/referral/apply', authMiddleware, vendorOnly, async (req, res) => {
     }
 });
 
+// ==================== STATS ENDPOINTS ====================
+
+// ==================== DRIVER MANAGEMENT ENDPOINTS ====================
+const driverModel = require('../models/driverModel'); // Ensure this is required at top if not global, but better to fetch usage
+
+// Get blocked drivers (Commission Payments Pending)
+router.get('/drivers/blocked', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        // Find drivers with status 'blocked_for_payment'
+        const blockedDrivers = await driverModel.findDrivers({ status: 'blocked_for_payment' });
+        
+        res.json({
+            success: true,
+            data: { drivers: blockedDrivers }
+        });
+    } catch (error) {
+        console.error('Get blocked drivers error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch blocked drivers',
+            error: error.message
+        });
+    }
+});
+
+// Unblock driver (Mark Commission as Paid)
+router.post('/drivers/:id/unblock', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Update driver status to 'active'
+        const updatedDriver = await driverModel.updateDriver(id, { status: 'active' });
+        
+        // Log transaction (optional but recommended)
+        // await walletModel.addTransaction(req.user.id, { type: 'credit', amount: commission, description: `Commission from ${updatedDriver.name}` });
+
+        res.json({
+            success: true,
+            message: 'Driver unblocked and commission marked as paid',
+            data: { driver: updatedDriver }
+        });
+    } catch (error) {
+        console.error('Unblock driver error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to unblock driver',
+            error: error.message
+        });
+    }
+});
+
+// Get dashboard stats
+router.get('/stats/dashboard', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const vendorId = req.user.id;
+        
+        // Parallel fetch for verify performance
+        const [
+            allTrips,
+            activeTrips,
+            pendingApprovals,
+            completedTrips
+        ] = await Promise.all([
+            bookingModel.getVendorBookings(vendorId), // All
+            bookingModel.getVendorBookings(vendorId, 'in_progress'),
+            bookingModel.getVendorBookings(vendorId, 'driver_accepted'), // Pending Approvals
+            bookingModel.getVendorBookings(vendorId, 'completed')
+        ]);
+        
+        // Calculate earnings for today
+        const today = new Date();
+        const startOfDay = new Date(today.setHours(0, 0, 0, 0));
+        
+        const todayEarnings = completedTrips
+            .filter(t => new Date(t.endTime || t.updatedAt) >= startOfDay)
+            .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+            
+        res.json({
+            success: true,
+            data: {
+                totalTrips: allTrips.length,
+                activeTrips: activeTrips.length,
+                pendingApprovals: pendingApprovals.length,
+                todayEarnings: todayEarnings,
+                currency: 'INR'
+            }
+        });
+    } catch (error) {
+        console.error('Get stats error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch dashboard stats',
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

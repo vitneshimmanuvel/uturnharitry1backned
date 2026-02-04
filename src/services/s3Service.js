@@ -59,8 +59,7 @@ const uploadBase64File = async (folder, fileName, base64Data, contentType) => {
         Bucket: S3_BUCKET,
         Key: key,
         Body: buffer,
-        ContentType: contentType,
-        ACL: 'public-read'
+        ContentType: contentType
     });
 
     try {
@@ -88,8 +87,7 @@ const uploadFile = async (folder, fileName, buffer, contentType) => {
         Bucket: S3_BUCKET,
         Key: key,
         Body: buffer,
-        ContentType: contentType,
-        ACL: 'public-read'
+        ContentType: contentType
     });
 
     try {

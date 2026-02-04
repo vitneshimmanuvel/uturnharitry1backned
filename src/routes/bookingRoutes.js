@@ -8,6 +8,7 @@ const driverModel = require('../models/driverModel');
 const videoService = require('../services/videoService');
 const whatsappService = require('../services/whatsappService');
 const s3Service = require('../services/s3Service');
+const { authMiddleware, vendorOnly } = require('../middleware/auth');
 
 // Generate unique tracking ID
 const generateTrackingId = () => {
@@ -182,12 +183,37 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
+ * GET /api/bookings/driver/:driverId
+ * Get bookings assigned to driver
+ */
+router.get('/driver/:driverId', async (req, res) => {
+    try {
+        const { driverId } = req.params;
+        const { status } = req.query;
+        
+        const bookings = await bookingModel.getDriverBookings(driverId, status);
+        
+        res.json({
+            success: true,
+            data: bookings
+        });
+    } catch (error) {
+        console.error('Get driver bookings error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
  * POST /api/bookings/:id/accept
  * Driver accepts booking
  */
 router.post('/:id/accept', async (req, res) => {
     try {
         const { driverId } = req.body;
+        console.log(`[AcceptBooking] Request for booking ${req.params.id} from driver ${driverId}`);
         
         if (!driverId) {
             return res.status(400).json({
@@ -220,6 +246,9 @@ router.post('/:id/driver-video', videoUpload.single('video'), async (req, res) =
     try {
         const { id } = req.params;
         const { driverId } = req.body;
+        
+        console.log(`[VIDEO UPLOAD] Request ID: '${id}'`);
+        console.log(`[VIDEO UPLOAD] Driver ID: '${driverId}'`);
         
         if (!req.file) {
             return res.status(400).json({
@@ -259,8 +288,16 @@ router.post('/:id/driver-video', videoUpload.single('video'), async (req, res) =
  * POST /api/bookings/:id/approve-driver
  * Vendor approves driver
  */
-router.post('/:id/approve-driver', async (req, res) => {
+router.post('/:id/approve-driver', authMiddleware, vendorOnly, async (req, res) => {
     try {
+        // 1. Check Ownership
+        const bookingToCheck = await bookingModel.getBookingById(req.params.id);
+        if (!bookingToCheck) return res.status(404).json({ success: false, message: 'Booking not found' });
+        
+        if (bookingToCheck.vendorId !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Unauthorized: You do not own this booking' });
+        }
+
         const booking = await bookingModel.approveDriver(req.params.id);
         
         // Generate OTP for this trip
@@ -301,10 +338,17 @@ router.post('/:id/approve-driver', async (req, res) => {
  * POST /api/bookings/:id/reject-driver
  * Vendor rejects driver
  */
-router.post('/:id/reject-driver', async (req, res) => {
+router.post('/:id/reject-driver', authMiddleware, vendorOnly, async (req, res) => {
     try {
         const { reason } = req.body;
         
+        // 1. Check Ownership
+        const bookingToCheck = await bookingModel.getBookingById(req.params.id);
+        if (!bookingToCheck) return res.status(404).json({ success: false, message: 'Booking not found' });
+        
+        if (bookingToCheck.vendorId !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Unauthorized: You do not own this booking' });
+        }
         if (!reason) {
             return res.status(400).json({
                 success: false,
@@ -618,6 +662,49 @@ router.post('/:id/pay-commission', async (req, res) => {
         });
     } catch (error) {
         console.error('Pay commission error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/approve-driver
+ * Vendor approves driver
+ */
+router.post('/:id/approve-driver', async (req, res) => {
+    try {
+        const booking = await bookingModel.approveDriver(req.params.id);
+        res.json({
+            success: true,
+            message: 'Driver approved successfully',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Approve driver error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/reject-driver
+ * Vendor rejects driver
+ */
+router.post('/:id/reject-driver', async (req, res) => {
+    try {
+        const { reason } = req.body;
+        const booking = await bookingModel.rejectDriver(req.params.id, reason);
+        res.json({
+            success: true,
+            message: 'Driver rejected',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Reject driver error:', error);
         res.status(500).json({
             success: false,
             message: error.message

@@ -2,7 +2,7 @@
  * Driver Model - Simplified (Name + Phone Only)
  * Matching Flutter UTurn app structure
  */
-const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const { dynamoDb, TABLE_NAMES } = require('../config/aws');
 const { v4: uuidv4 } = require('uuid');
 
@@ -156,6 +156,46 @@ const getOnlineDrivers = async () => {
     return result.Items || [];
 };
 
+// Find drivers with filter
+const findDrivers = async (filter) => {
+    try {
+        const params = {
+            TableName: TABLE_NAMES.drivers, // Corrected to TABLE_NAMES.drivers
+            FilterExpression: '',
+            ExpressionAttributeNames: {},
+            ExpressionAttributeValues: {}
+        };
+
+        const filterExpressions = [];
+        
+        // Build filter expression
+        Object.keys(filter).forEach((key, index) => {
+            const attrKey = `#key${index}`;
+            const valKey = `:val${index}`;
+            
+            filterExpressions.push(`${attrKey} = ${valKey}`);
+            params.ExpressionAttributeNames[attrKey] = key;
+            params.ExpressionAttributeValues[valKey] = filter[key];
+        });
+
+        if (filterExpressions.length > 0) {
+            params.FilterExpression = filterExpressions.join(' AND ');
+        } else {
+            // Scan all if no filter (be careful in prod)
+            delete params.FilterExpression;
+            delete params.ExpressionAttributeNames;
+            delete params.ExpressionAttributeValues;
+        }
+
+        const command = new ScanCommand(params); // Use Scan for non-indexed attributes
+        const response = await docClient.send(command);
+        return response.Items || [];
+    } catch (error) {
+        console.error('Find drivers error:', error);
+        throw error;
+    }
+};
+
 module.exports = {
     createDriver,
     findDriverByPhone,
@@ -163,5 +203,6 @@ module.exports = {
     updateDriver,
     updateDriverDocuments,
     setDriverOnlineStatus,
-    getOnlineDrivers
+    getOnlineDrivers,
+    findDrivers // Export new function
 };

@@ -6,13 +6,17 @@ const authToken = process.env.TWILIO_AUTH_TOKEN;
 const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER; // Format: whatsapp:+14155238886
 
 // Only initialize client if credentials are provided
+// Only initialize client if credentials are provided
+// let client = null;
+// if (accountSid && authToken && accountSid.startsWith('AC')) {
+//    client = twilio(accountSid, authToken);
+//    console.log('✅ Twilio WhatsApp service initialized');
+// } else {
+//    console.warn('⚠️ Twilio message sending PAUSED by user request');
+// }
 let client = null;
-if (accountSid && authToken && accountSid.startsWith('AC')) {
-    client = twilio(accountSid, authToken);
-    console.log('✅ Twilio WhatsApp service initialized');
-} else {
-    console.warn('⚠️ Twilio not configured - WhatsApp messages will be simulated');
-}
+console.log('NOTICE: Twilio WhatsApp service is currently DISABLED per user request.');
+console.warn('⚠️ All messages will be simulated in console.');
 
 /**
  * Send WhatsApp message using Twilio

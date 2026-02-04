@@ -39,6 +39,8 @@ const TABLES = {
   vendors: "uturn-vendors",
   drivers: "uturn-drivers",
   bookings: "uturn-bookings",
+  vehicles: "uturn-vehicles",
+  loans: "uturn-loans",
 };
 
 // Alias for TABLE_NAMES
