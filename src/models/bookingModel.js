@@ -96,6 +96,7 @@ const createBooking = async (bookingData) => {
         waitingTimeMins: 0,
         paymentStatus: 'pending', // pending, completed
         paymentMethod: null, // cash, online
+        paymentMode: bookingData.paymentMode || 'customer_pays_driver', // 'customer_pays_vendor' or 'customer_pays_driver'
         
         // Tracking
         trackingId: null,
