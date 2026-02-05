@@ -156,12 +156,12 @@ const getVendorBookings = async (vendorId, status = null) => {
         FilterExpression: 'vendorId = :vendorId',
         ExpressionAttributeValues: {
             ':vendorId': vendorId
-        },
-        ExpressionAttributeNames: {}
+        }
     };
     
     if (status) {
         const statuses = status.split(',').map(s => s.trim());
+        params.ExpressionAttributeNames = {};
         if (statuses.length === 1) {
             params.FilterExpression += ' AND #status = :status';
             params.ExpressionAttributeNames['#status'] = 'status';
