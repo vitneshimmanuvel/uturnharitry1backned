@@ -33,6 +33,57 @@ router.post('/check-phone', async (req, res) => {
     }
 });
 
+// Check if Aadhaar number is already registered (real-time validation)
+router.post('/check-aadhaar', async (req, res) => {
+    try {
+        const { aadhaar } = req.body;
+        if (!aadhaar || aadhaar.length < 12) {
+            return res.json({ success: true, available: false, message: 'Enter valid 12-digit Aadhaar number' });
+        }
+        // Scan vendors table for matching aadharNumber
+        const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+        const { docClient, TABLES } = require('../config/aws');
+        const result = await docClient.send(new ScanCommand({
+            TableName: TABLES.VENDORS,
+            FilterExpression: 'aadharNumber = :aadhaar',
+            ExpressionAttributeValues: { ':aadhaar': aadhaar }
+        }));
+        const exists = result.Items && result.Items.length > 0;
+        res.json({
+            success: true,
+            available: !exists,
+            message: exists ? 'Aadhaar number already registered' : 'Aadhaar number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
+// Check if PAN number is already registered (real-time validation)
+router.post('/check-pan', async (req, res) => {
+    try {
+        const { pan } = req.body;
+        if (!pan || pan.length < 10) {
+            return res.json({ success: true, available: false, message: 'Enter valid 10-character PAN number' });
+        }
+        const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+        const { docClient, TABLES } = require('../config/aws');
+        const result = await docClient.send(new ScanCommand({
+            TableName: TABLES.VENDORS,
+            FilterExpression: 'panNumber = :pan',
+            ExpressionAttributeValues: { ':pan': pan.toUpperCase() }
+        }));
+        const exists = result.Items && result.Items.length > 0;
+        res.json({
+            success: true,
+            available: !exists,
+            message: exists ? 'PAN number already registered' : 'PAN number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Register new vendor (phone-only, no password)
 router.post('/register', async (req, res) => {
     try {
@@ -55,11 +106,16 @@ router.post('/register', async (req, res) => {
             });
         }
 
-        // Create vendor (no password)
+        // Create vendor with all provided fields
         const vendor = await createVendor({
             businessName,
             ownerName,
-            phone
+            phone,
+            aadharNumber: req.body.aadharNumber || null,
+            panNumber: req.body.panNumber || null,
+            dob: req.body.dob || null,
+            city: req.body.city || null,
+            documents: req.body.documents || {}
         });
 
         // Generate token

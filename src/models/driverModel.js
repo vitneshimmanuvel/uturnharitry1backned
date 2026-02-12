@@ -29,6 +29,8 @@ const createDriver = async (driverData) => {
         vehicleBrand: driverData.vehicleBrand || null,
         vehicleModel: driverData.vehicleModel || null,
         homeLocation: driverData.homeLocation || null,
+        aadharNumber: driverData.aadharNumber || null,
+        dob: driverData.dob || null,
         
         // For acting drivers
         preferredVehicles: driverData.preferredVehicles || [],

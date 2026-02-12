@@ -15,6 +15,7 @@ const {
 } = require('../models/driverModel');
 const { generateToken, authMiddleware, driverOnly } = require('../middleware/auth');
 const { getUploadUrl } = require('../services/s3Service');
+const { findDrivers } = require('../models/driverModel');
 
 // Check if phone number is already registered (real-time validation)
 router.post('/check-phone', async (req, res) => {
@@ -42,6 +43,87 @@ router.post('/check-phone', async (req, res) => {
     }
 });
 
+// Check if Aadhaar number is already registered (real-time validation)
+router.post('/check-aadhaar', async (req, res) => {
+    try {
+        const { aadhaar } = req.body;
+        if (!aadhaar || aadhaar.length < 12) {
+            return res.json({ success: true, available: false, message: 'Enter valid 12-digit Aadhaar number' });
+        }
+        const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+        const { dynamoDb, TABLE_NAMES } = require('../config/aws');
+        const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+        const dc = DynamoDBDocumentClient.from(dynamoDb);
+        const result = await dc.send(new ScanCommand({
+            TableName: TABLE_NAMES.drivers,
+            FilterExpression: 'aadharNumber = :aadhaar',
+            ExpressionAttributeValues: { ':aadhaar': aadhaar }
+        }));
+        const exists = result.Items && result.Items.length > 0;
+        res.json({
+            success: true,
+            available: !exists,
+            message: exists ? 'Aadhaar number already registered' : 'Aadhaar number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
+// Check if Licence number is already registered (real-time validation)
+router.post('/check-licence', async (req, res) => {
+    try {
+        const { licence } = req.body;
+        if (!licence || licence.length < 5) {
+            return res.json({ success: true, available: false, message: 'Enter a valid licence number' });
+        }
+        const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+        const { dynamoDb, TABLE_NAMES } = require('../config/aws');
+        const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+        const dc = DynamoDBDocumentClient.from(dynamoDb);
+        const result = await dc.send(new ScanCommand({
+            TableName: TABLE_NAMES.drivers,
+            FilterExpression: 'licenceNumber = :licence',
+            ExpressionAttributeValues: { ':licence': licence.toUpperCase() }
+        }));
+        const exists = result.Items && result.Items.length > 0;
+        res.json({
+            success: true,
+            available: !exists,
+            message: exists ? 'Licence number already registered' : 'Licence number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
+// Check if Vehicle number is already registered (real-time validation)
+router.post('/check-vehicle', async (req, res) => {
+    try {
+        const { vehicleNumber } = req.body;
+        if (!vehicleNumber || vehicleNumber.length < 5) {
+            return res.json({ success: true, available: false, message: 'Enter a valid vehicle number' });
+        }
+        const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+        const { dynamoDb, TABLE_NAMES } = require('../config/aws');
+        const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+        const dc = DynamoDBDocumentClient.from(dynamoDb);
+        const result = await dc.send(new ScanCommand({
+            TableName: TABLE_NAMES.drivers,
+            FilterExpression: 'vehicleNumber = :vn',
+            ExpressionAttributeValues: { ':vn': vehicleNumber.toUpperCase() }
+        }));
+        const exists = result.Items && result.Items.length > 0;
+        res.json({
+            success: true,
+            available: !exists,
+            message: exists ? 'Vehicle number already registered' : 'Vehicle number is available'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Register new driver - SIMPLIFIED (Name + Phone Only)
 router.post('/register', async (req, res) => {
     try {
@@ -55,7 +137,10 @@ router.post('/register', async (req, res) => {
             vehicleType,
             vehicleBrand,
             vehicleModel,
-            preferredVehicles
+            preferredVehicles,
+            aadharNumber,
+            dob,
+            homeLocation
         } = req.body;
 
         // Only name and phone are required
@@ -85,7 +170,10 @@ router.post('/register', async (req, res) => {
             vehicleType,
             vehicleBrand,
             vehicleModel,
-            preferredVehicles
+            preferredVehicles,
+            aadharNumber: aadharNumber || null,
+            dob: dob || null,
+            homeLocation: homeLocation || null
         });
 
         // Generate token

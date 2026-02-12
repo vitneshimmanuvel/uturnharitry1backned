@@ -20,6 +20,15 @@ const createVendor = async (vendorData) => {
         profileImage: vendorData.profileImage || '',
         address: vendorData.address || '',
         gstNumber: vendorData.gstNumber || '',
+        city: vendorData.city || '',
+        aadharNumber: vendorData.aadharNumber || null,
+        panNumber: vendorData.panNumber || null,
+        dob: vendorData.dob || null,
+        documents: vendorData.documents || {
+            aadhaar: null,
+            pan: null,
+            selfie: null
+        },
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
     };
