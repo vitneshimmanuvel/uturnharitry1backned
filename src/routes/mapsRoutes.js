@@ -7,7 +7,8 @@
 const express = require('express');
 const router = express.Router();
 const mapsService = require('../services/mapsService');
-const olaMapsService = require('../services/olaMapsService'); // Legacy, for backward compatibility
+const googleMapsService = require('../services/googleMapsService');
+const olaMapsService = require('../services/olaMapsService'); // Legacy, for calculateFare only
 
 /**
  * GET /api/maps/tiles/:z/:x/:y
@@ -81,10 +82,9 @@ router.get('/directions', async (req, res) => {
         const [originLat, originLng] = origin.split(',').map(Number);
         const [destLat, destLng] = destination.split(',').map(Number);
 
-        const directions = await olaMapsService.getDirections(
+        const directions = await googleMapsService.getDirections(
             { lat: originLat, lng: originLng },
-            { lat: destLat, lng: destLng },
-            mode
+            { lat: destLat, lng: destLng }
         );
 
         if (!directions) {
@@ -117,7 +117,7 @@ router.get('/distance', async (req, res) => {
         const [originLat, originLng] = origin.split(',').map(Number);
         const [destLat, destLng] = destination.split(',').map(Number);
 
-        const result = await olaMapsService.getDistanceMatrix(
+        const result = await googleMapsService.getDistanceMatrix(
             { lat: originLat, lng: originLng },
             { lat: destLat, lng: destLng }
         );
@@ -149,7 +149,7 @@ router.get('/geocode', async (req, res) => {
             return res.status(400).json({ error: 'Address is required' });
         }
 
-        const result = await olaMapsService.geocodeAddress(address);
+        const result = await googleMapsService.geocode(address);
 
         if (!result) {
             return res.status(404).json({ error: 'Address not found' });
@@ -178,7 +178,7 @@ router.get('/reverse-geocode', async (req, res) => {
             return res.status(400).json({ error: 'Latitude and longitude are required' });
         }
 
-        const result = await olaMapsService.reverseGeocode(parseFloat(lat), parseFloat(lng));
+        const result = await googleMapsService.reverseGeocode(parseFloat(lat), parseFloat(lng));
 
         if (!result) {
             return res.status(404).json({ error: 'Location not found' });
@@ -208,7 +208,7 @@ router.get('/places/search', async (req, res) => {
         }
 
         const location = lat && lng ? { lat: parseFloat(lat), lng: parseFloat(lng) } : null;
-        const results = await olaMapsService.searchPlaces(query, location);
+        const results = await googleMapsService.searchPlaces(query, location);
 
         res.json({
             success: true,
@@ -233,7 +233,7 @@ router.get('/places/details', async (req, res) => {
             return res.status(400).json({ error: 'Place ID is required' });
         }
 
-        const result = await olaMapsService.getPlaceDetails(placeId);
+        const result = await googleMapsService.getPlaceDetails(placeId);
 
         if (!result) {
             return res.status(404).json({ error: 'Place not found' });

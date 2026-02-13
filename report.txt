@@ -1,21 +1,91 @@
---- DATA REPORT ---
+--- DATA REPORT (2026-02-12T19:55:56.321Z) ---
 
-🔵 PENDING: 0
+⚪ DRAFT: 3
+- ID: 3aeaf9e6-f2d8-4e88-b78a-f48b5d24804e
+  Customer: hari (9442616297)
+  Driver: N/A
+  Route: Coimbatore -> Erode, Tamil Nadu, India
+  Status: draft
+---
+- ID: 2aa01f04-8caf-43bf-9c18-03dd4664851b
+  Customer: Charles (9751111023)
+  Driver: N/A
+  Route: Coimbatore -> Madurai, Tamil Nadu, India
+  Status: draft
+---
+- ID: d5e17816-417f-4547-ab8c-42e9bd99cc98
+  Customer: ss (7339121045)
+  Driver: N/A
+  Route: Velanthavalam -> RW5P+7F Sokunoor, Tamil Nadu, India
+  Status: draft
+---
 
-🟡 DRIVER ACCEPTED: 6
-- ID: c96827d5-e9fa-4029-9620-f8861b62ca66
-  Customer: jacktween (7339121049)
-  Driver: Jakc
-  Route: Coimbatore -> 5/123, Sulur, Tamil Nadu 641402, India
+🔵 PENDING: 2
+- ID: 844459fc-a77f-4ed1-9c50-9468dd05379e
+  Customer: Charles (9751111023)
+  Driver: N/A
+  Route: Coimbatore -> 
+  Status: pending
+---
+- ID: 86b2c048-59e8-4ab7-ba1d-34295cb6d6cf
+  Customer: customerr (7339121049)
+  Driver: jack
+  Route: Coimbatore -> 1187A, Rukmani Nagar, Padma Layout, Ramanathapuram, Coimbatore, Tamil Nadu 641045, India
+  Status: pending
+---
+
+🟡 DRIVER ACCEPTED: 3
+- ID: c6889864-ad09-4508-931e-f3b5ec68e3a3
+  Customer: charu  (9751111022)
+  Driver: Charles 
+  Route: Chennai -> Chennai
+  Status: driver_accepted
+---
+- ID: 791fa61d-2522-46e4-a423-52193ca9f88f
+  Customer: hari (9442616297)
+  Driver: jack
+  Route: Coimbatore -> Erode, Tamil Nadu, India
+  Status: driver_accepted
+---
+- ID: 33af5155-860b-4676-ba41-ffa23cf266bc
+  Customer: customersumathi (1234567890)
+  Driver: Hari
+  Route: Coimbatore -> Vanavarayar residence, 03, Olymbus, Rukmani Nagar, Coimbatore, Tamil Nadu 641045, India
   Status: driver_accepted
 ---
 
-🔴 REJECTED: 0
-
-🟢 APPROVED: 3
-- ID: da16b6cd-b5e4-4b15-ad30-9ff0dd42a90c
-  Customer: Test Customer (8888888888)
-  Driver: Test Driver
-  Route: City X -> City Y
+🟢 VENDOR APPROVED: 1
+- ID: ba1e75ac-ee6b-48b3-9ac0-502d2d9e19fa
+  Customer: custoerm (1212049134)
+  Driver: jack
+  Route: Coimbatore -> 2356+JF3, N.K. Palayam, Coimbatore, Ondipudur, Tamil Nadu 641103, India
   Status: vendor_approved
 ---
+
+🚗 IN PROGRESS: 2
+- ID: 33499905-b02d-4b81-831a-360423958c20
+  Customer: prabhu (8870273571)
+  Driver: Alfax
+  Route: Singanallur -> 
+  Status: in_progress
+---
+- ID: a2d1e3ba-cc8c-4cbd-83ad-aee6f1f9aa9a
+  Customer: bestry (1234567899)
+  Driver: Jakc
+  Route: Dharapuram North -> J63C+3M Kurunjeri, Tamil Nadu, India
+  Status: in_progress
+---
+
+🏁 COMPLETED: 1
+- ID: f9ff1a9f-fe9e-4bff-bcaa-9b946c7f26c4
+  Customer: customer (7339121049)
+  Driver: jack
+  Route: Coimbatore -> 487, Perur Main Rd, Sri Dhanalakshmi Gardens, Selvapuram South, Coimbatore, Tamil Nadu 641026, India
+  Status: completed
+---
+
+❌ CANCELLED: 0
+
+⚠️ REJECTED: 0
+
+❓ OTHERS: 0

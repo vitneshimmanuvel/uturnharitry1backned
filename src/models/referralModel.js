@@ -81,7 +81,7 @@ const getReferralByCode = async (code) => {
 /**
  * Apply referral code (new user uses someone's code)
  */
-const applyReferralCode = async (code, newUserId, newUserName) => {
+const applyReferralCode = async (code, newUserId, newUserName, immediateBonus = true) => {
     const referral = await getReferralByCode(code);
     
     if (!referral) {
@@ -97,19 +97,22 @@ const applyReferralCode = async (code, newUserId, newUserName) => {
         userId: newUserId,
         name: newUserName,
         joinedAt: new Date().toISOString(),
-        bonusPaid: true
+        bonusPaid: immediateBonus
     };
 
     const updatedReferrals = [...(referral.referredUsers || []), referredUser];
+    
+    // Only increment earnings if immediateBonus is true
+    const earningsInc = immediateBonus ? REFERRAL_BONUS : 0;
 
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { vendorId: referral.vendorId },
-        UpdateExpression: 'SET referredUsers = :users, totalReferrals = :count, earnings = :earnings, updatedAt = :now',
+        UpdateExpression: 'SET referredUsers = :users, totalReferrals = :count, earnings = earnings + :inc, updatedAt = :now',
         ExpressionAttributeValues: {
             ':users': updatedReferrals,
             ':count': updatedReferrals.length,
-            ':earnings': (referral.earnings || 0) + REFERRAL_BONUS,
+            ':inc': earningsInc,
             ':now': new Date().toISOString()
         }
     }));
@@ -117,8 +120,40 @@ const applyReferralCode = async (code, newUserId, newUserName) => {
     return {
         success: true,
         referrerId: referral.vendorId,
-        bonus: REFERRAL_BONUS
+        bonus: immediateBonus ? REFERRAL_BONUS : 0,
+        pending: !immediateBonus
     };
+};
+
+/**
+ * Complete a pending referral bonus (e.g. after 5 trips)
+ */
+const completeReferralBonus = async (referrerId, refereeId) => {
+    const referral = await getReferralByVendorId(referrerId);
+    if (!referral) return false;
+
+    const userIndex = referral.referredUsers.findIndex(u => u.userId === refereeId);
+    if (userIndex === -1) return false;
+
+    // Check if already paid
+    if (referral.referredUsers[userIndex].bonusPaid) return true;
+
+    // Update status locally
+    referral.referredUsers[userIndex].bonusPaid = true;
+    referral.referredUsers[userIndex].completedAt = new Date().toISOString();
+
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { vendorId: referrerId },
+        UpdateExpression: 'SET referredUsers = :users, earnings = earnings + :inc, updatedAt = :now',
+        ExpressionAttributeValues: {
+            ':users': referral.referredUsers,
+            ':inc': REFERRAL_BONUS,
+            ':now': new Date().toISOString()
+        }
+    }));
+
+    return true;
 };
 
 /**
@@ -140,6 +175,7 @@ module.exports = {
     getReferralByVendorId,
     getReferralByCode,
     applyReferralCode,
+    completeReferralBonus,
     getOrCreateReferral,
     REFERRAL_BONUS
 };

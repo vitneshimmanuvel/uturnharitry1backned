@@ -14,6 +14,9 @@ const {
     getOnlineDrivers
 } = require('../models/driverModel');
 const { generateToken, authMiddleware, driverOnly } = require('../middleware/auth');
+const driverModel = require('../models/driverModel');
+const bookingModel = require('../models/bookingModel');
+const referralModel = require('../models/referralModel');
 const { getUploadUrl } = require('../services/s3Service');
 const { findDrivers } = require('../models/driverModel');
 
@@ -124,6 +127,28 @@ router.post('/check-vehicle', async (req, res) => {
     }
 });
 
+// Check if Referral Code is valid
+router.post('/check-referral', async (req, res) => {
+    try {
+        const { code } = req.body;
+        if (!code) {
+            return res.json({ success: true, valid: false, message: 'Enter a referral code' });
+        }
+        
+        const { findDriverByReferralCode } = require('../models/driverModel');
+        const referrer = await findDriverByReferralCode(code);
+        
+        res.json({
+            success: true,
+            valid: !!referrer,
+            message: referrer ? 'Valid referral code' : 'Invalid referral code',
+            referrerName: referrer ? referrer.name : null
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Register new driver - SIMPLIFIED (Name + Phone Only)
 router.post('/register', async (req, res) => {
     try {
@@ -140,7 +165,12 @@ router.post('/register', async (req, res) => {
             preferredVehicles,
             aadharNumber,
             dob,
-            homeLocation
+            homeLocation,
+            // New fields
+            rcNumber,
+            insuranceId,
+            insuranceExpiry,
+            fcExpiry
         } = req.body;
 
         // Only name and phone are required
@@ -173,7 +203,13 @@ router.post('/register', async (req, res) => {
             preferredVehicles,
             aadharNumber: aadharNumber || null,
             dob: dob || null,
-            homeLocation: homeLocation || null
+            rcNumber: rcNumber || null,
+            insuranceId: insuranceId || null,
+            insuranceExpiry: insuranceExpiry || null,
+            fcExpiry: fcExpiry || null,
+            state: req.body.state,
+            languages: req.body.languages,
+            referredBy: req.body.referredBy // Pass referral code
         });
 
         // Generate token

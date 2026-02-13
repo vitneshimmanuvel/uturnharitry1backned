@@ -2,19 +2,38 @@
  * Driver Model - Simplified (Name + Phone Only)
  * Matching Flutter UTurn app structure
  */
-const { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
-const { dynamoDb, TABLE_NAMES } = require('../config/aws');
+const { TABLES, TABLE_NAMES, docClient } = require('../config/aws');
+const { PutCommand, GetCommand, UpdateCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const referralModel = require('./referralModel');
 const { v4: uuidv4 } = require('uuid');
-
-const docClient = DynamoDBDocumentClient.from(dynamoDb);
 
 /**
  * Create a new driver - SIMPLIFIED (Name + Phone Only)
  * No password, no email required
  */
 const createDriver = async (driverData) => {
+    const driverId = uuidv4();
+    
+    // Generate Referral Code using centralized model
+    const referralRecord = await referralModel.createReferral(driverId, driverData.phone);
+    const referralCode = referralRecord.code;
+
+    // Handle being referred by someone else
+    if (driverData.referredBy) {
+        try {
+            await referralModel.applyReferralCode(
+                driverData.referredBy, 
+                driverId, 
+                driverData.name, 
+                false // immediateBonus = false (Wait for 5 trips)
+            );
+        } catch (e) {
+            console.log('Referral application failed:', e.message);
+        }
+    }
+
     const driver = {
-        id: uuidv4(),
+        id: driverId,
         // Essential fields only
         name: driverData.name,
         phone: driverData.phone,
@@ -31,11 +50,21 @@ const createDriver = async (driverData) => {
         homeLocation: driverData.homeLocation || null,
         aadharNumber: driverData.aadharNumber || null,
         dob: driverData.dob || null,
+        rcNumber: driverData.rcNumber || null,
+        insuranceId: driverData.insuranceId || null,
+        insuranceExpiry: driverData.insuranceExpiry || null,
+        fcExpiry: driverData.fcExpiry || null,
+        
+        // Profile picture URL
+        profilePic: driverData.profilePic || null,
         
         // For acting drivers
         preferredVehicles: driverData.preferredVehicles || [],
         
         // Documents (URLs) - optional, can be uploaded later
+        state: driverData.state || null,
+        languages: driverData.languages || [], // Array of strings
+
         documents: driverData.documents || {
             selfie: null,
             aadhar: null,
@@ -44,35 +73,82 @@ const createDriver = async (driverData) => {
             insurance: null
         },
         
-        // Status
+        referralCode, // Store for easy display
         isVerified: false,
         isOnline: false,
-        isApprovedByVendor: false,
-        approvedByVendorId: null,
-        
-        // Stats
-        rating: 0,
+        status: 'active',
         totalTrips: 0,
-        totalEarnings: 0,
-        
-        // Referral
-        referralCode: `DRV${driverData.phone.slice(-4)}${Math.random().toString(36).substring(2, 4).toUpperCase()}`,
-        referredBy: driverData.referredBy || null,
-        referralCount: 0,
-        
-        // Availability
-        availability: [],
-        
+        rating: 5.0,
+        walletBalance: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
     };
 
-    await docClient.send(new PutCommand({
+    try {
+        await docClient.send(new PutCommand({
+            TableName: TABLE_NAMES.drivers,
+            Item: driver
+        }));
+        return driver;
+    } catch (error) {
+        console.error('Error creating driver:', error);
+        throw error;
+    }
+};
+
+/**
+ * Find driver by referral code
+ */
+const findDriverByReferralCode = async (code) => {
+    const result = await docClient.send(new ScanCommand({
         TableName: TABLE_NAMES.drivers,
-        Item: driver
+        FilterExpression: 'referralCode = :code',
+        ExpressionAttributeValues: { ':code': code }
     }));
 
-    return driver;
+    return result.Items && result.Items.length > 0 ? result.Items[0] : null;
+};
+
+/**
+ * Increment referral stats for referrer
+ */
+const incrementReferralStats = async (referralCode) => {
+    const referrer = await findDriverByReferralCode(referralCode);
+    if (referrer) {
+        await docClient.send(new UpdateCommand({
+            TableName: TABLE_NAMES.drivers,
+            Key: { id: referrer.id },
+            UpdateExpression: 'SET referralCount = referralCount + :inc',
+            ExpressionAttributeValues: { ':inc': 1 }
+        }));
+    }
+
+};
+
+/**
+ * Increment driver trips (and return new count)
+ */
+const incrementDriverTrips = async (driverId) => {
+    const result = await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAMES.drivers,
+        Key: { id: driverId },
+        UpdateExpression: 'SET totalTrips = if_not_exists(totalTrips, :zero) + :inc, updatedAt = :now',
+        ExpressionAttributeValues: { ':zero': 0, ':inc': 1, ':now': new Date().toISOString() },
+        ReturnValues: 'ALL_NEW'
+    }));
+    return result.Attributes.totalTrips;
+};
+
+/**
+ * Add earnings to driver
+ */
+const addDriverEarnings = async (driverId, amount) => {
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAMES.drivers,
+        Key: { id: driverId },
+        UpdateExpression: 'SET totalEarnings = if_not_exists(totalEarnings, :zero) + :amount, updatedAt = :now',
+        ExpressionAttributeValues: { ':zero': 0, ':amount': amount, ':now': new Date().toISOString() }
+    }));
 };
 
 /**
@@ -206,5 +282,8 @@ module.exports = {
     updateDriverDocuments,
     setDriverOnlineStatus,
     getOnlineDrivers,
-    findDrivers // Export new function
+    findDrivers,
+    findDriverByReferralCode, // Export new function
+    incrementDriverTrips,
+    addDriverEarnings
 };

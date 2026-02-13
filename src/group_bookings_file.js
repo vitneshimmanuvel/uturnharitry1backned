@@ -9,21 +9,49 @@ const docClient = DynamoDBDocumentClient.from(client);
 const run = async () => {
     try {
         const result = await docClient.send(new ScanCommand({ TableName: 'uturn-bookings' }));
-        const groups = { pending: [], driver_accepted: [], rejected: [], vendor_approved: [], completed: [] };
-        result.Items.forEach(b => { if(groups[b.status]) groups[b.status].push(b); });
+        const groups = { 
+            pending: [], 
+            driver_accepted: [], 
+            vendor_approved: [], 
+            in_progress: [],
+            completed: [], 
+            cancelled: [],
+            rejected: [], 
+            draft: [],
+            others: []
+        };
+
+        result.Items.forEach(b => { 
+            if(groups[b.status]) {
+                groups[b.status].push(b); 
+            } else {
+                groups.others.push(b);
+            }
+        });
         
-        let output = `--- DATA REPORT ---\n`;
-        output += `\n🔵 PENDING: ${groups.pending.length}\n`;
-        if(groups.pending.length > 0) output += format(groups.pending[0]);
+        let output = `--- DATA REPORT (${new Date().toISOString()}) ---\n`;
         
-        output += `\n🟡 DRIVER ACCEPTED: ${groups.driver_accepted.length}\n`;
-        if(groups.driver_accepted.length > 0) output += format(groups.driver_accepted[0]);
-        
-        output += `\n🔴 REJECTED: ${groups.rejected.length}\n`;
-        if(groups.rejected.length > 0) output += format(groups.rejected[0]);
-        
-        output += `\n🟢 APPROVED: ${groups.vendor_approved.length}\n`;
-        if(groups.vendor_approved.length > 0) output += format(groups.vendor_approved[0]);
+        const sections = [
+            { key: 'draft', label: '⚪ DRAFT' },
+            { key: 'pending', label: '🔵 PENDING' },
+            { key: 'driver_accepted', label: '🟡 DRIVER ACCEPTED' },
+            { key: 'vendor_approved', label: '🟢 VENDOR APPROVED' },
+            { key: 'in_progress', label: '🚗 IN PROGRESS' },
+            { key: 'completed', label: '🏁 COMPLETED' },
+            { key: 'cancelled', label: '❌ CANCELLED' },
+            { key: 'rejected', label: '⚠️ REJECTED' },
+            { key: 'others', label: '❓ OTHERS' }
+        ];
+
+        sections.forEach(sec => {
+            output += `\n${sec.label}: ${groups[sec.key].length}\n`;
+            if (groups[sec.key].length > 0) {
+                // Show first 5 items to avoid huge logs, or all? Let's show all for now as requested.
+                groups[sec.key].forEach(item => {
+                    output += format(item);
+                });
+            }
+        });
         
         fs.writeFileSync('report.txt', output);
         console.log('Report written to report.txt');

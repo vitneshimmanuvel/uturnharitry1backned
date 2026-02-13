@@ -84,6 +84,37 @@ router.post('/check-pan', async (req, res) => {
     }
 });
 
+// Check for existing customer by phone (from past bookings)
+router.post('/check-customer', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone || phone.length < 10) {
+            return res.json({ success: false, message: 'Enter valid phone number' });
+        }
+        
+        const booking = await bookingModel.findLatestBookingByPhone(phone);
+        
+        if (booking) {
+            res.json({
+                success: true,
+                found: true,
+                customer: {
+                    name: booking.customerName,
+                    language: booking.customerLanguage || 'Tamil'
+                }
+            });
+        } else {
+            res.json({
+                success: true,
+                found: false,
+                message: 'Customer not found'
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Register new vendor (phone-only, no password)
 router.post('/register', async (req, res) => {
     try {
@@ -115,6 +146,8 @@ router.post('/register', async (req, res) => {
             panNumber: req.body.panNumber || null,
             dob: req.body.dob || null,
             city: req.body.city || null,
+            state: req.body.state || null,
+            languages: req.body.languages || [],
             documents: req.body.documents || {}
         });
 

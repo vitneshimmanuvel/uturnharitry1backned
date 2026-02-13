@@ -1,7 +1,8 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand, ScanCommand, GetCommand, UpdateCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
 const { v4: uuidv4 } = require('uuid');
-const driverModel = require('./driverModel'); // Import to fetch driver details
+const driverModel = require('./driverModel');
+const referralModel = require('./referralModel'); // Import to fetch driver details
 
 // DynamoDB Setup
 const client = new DynamoDBClient({
@@ -15,12 +16,27 @@ const client = new DynamoDBClient({
 const docClient = DynamoDBDocumentClient.from(client);
 const TABLE_NAME = 'uturn-bookings'; // Must match aws.js config
 
+// Generate unique tracking ID (e.g. TRIP-8X2A)
+const generateTrackingId = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I, O, 0, 1
+    let result = 'TRIP-';
+    for (let i = 0; i < 4; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+};
+
 /**
  * Create a new booking
  * @param {Object} bookingData - Booking details
  * @returns {Promise<Object>} Created booking
  */
 const createBooking = async (bookingData) => {
+    // Sanity check for Vendor ID
+    if (!bookingData.vendorId) {
+        throw new Error('Vendor ID is required to create a booking');
+    }
+
     const booking = {
         id: uuidv4(),
         vendorId: bookingData.vendorId,
@@ -99,7 +115,7 @@ const createBooking = async (bookingData) => {
         paymentMode: bookingData.paymentMode || 'customer_pays_driver', // 'customer_pays_vendor' or 'customer_pays_driver'
         
         // Tracking
-        trackingId: null,
+        trackingId: generateTrackingId(),
         
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -152,6 +168,7 @@ const getNearbyBookings = async (city, vehicleType, status = 'pending') => {
  * Get bookings by vendor ID
  */
 const getVendorBookings = async (vendorId, status = null) => {
+    console.log(`[Vendor Isolation Check] Fetching bookings for vendorId: ${vendorId}`);
     const params = {
         TableName: TABLE_NAME,
         FilterExpression: 'vendorId = :vendorId',
@@ -484,8 +501,31 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     }));
     
     // Sync blocking status to Driver entity if Cash Payment
-    if (booking.assignedDriverId && isCashPayment) {
-        await driverModel.updateDriver(booking.assignedDriverId, { status: 'blocked_for_payment' });
+    if (booking.assignedDriverId) {
+        if (isCashPayment) {
+            await driverModel.updateDriver(booking.assignedDriverId, { status: 'blocked_for_payment' });
+        }
+        
+        // Update Driver Stats & Check Referral
+        const newTripCount = await driverModel.incrementDriverTrips(booking.assignedDriverId);
+        
+        // Referral Bonus Check (e.g. 5th Trip)
+        if (newTripCount === 5) {
+             const driver = await driverModel.findDriverById(booking.assignedDriverId);
+             if (driver && driver.referredBy) {
+                 // driver.referredBy is the Code. We need to find the referrer by code to get their ID?
+                 // Actually referralModel.completeReferralBonus takes (referrerId, refereeId).
+                 // We first need to find the referrer's ID from the code.
+                 const referral = await referralModel.getReferralByCode(driver.referredBy);
+                 
+                 if (referral) {
+                     const success = await referralModel.completeReferralBonus(referral.vendorId, driver.id); // vendorId is driverId here
+                     if (success) {
+                        console.log(`[REFERRAL] Credited bonus to ${referral.vendorId} for referee ${driver.id}`);
+                     }
+                 }
+             }
+        }
     }
     
     return await getBookingById(bookingId);
@@ -584,6 +624,28 @@ const markCommissionPaid = async (bookingId) => {
     return await getBookingById(bookingId);
 };
 
+/**
+ * Find latest booking by customer phone
+ */
+const findLatestBookingByPhone = async (phone) => {
+    // Scan for bookings with this phone number
+    const result = await docClient.send(new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: 'customerPhone = :phone',
+        ExpressionAttributeValues: {
+            ':phone': phone
+        }
+    }));
+    
+    if (!result.Items || result.Items.length === 0) {
+        return null;
+    }
+    
+    // Sort by createdAt desc to get the latest
+    result.Items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return result.Items[0];
+};
+
 module.exports = {
     createBooking,
     getBookingById,
@@ -605,5 +667,6 @@ module.exports = {
     completeTrip,
     updateBooking,
     hasActiveBooking,
-    markCommissionPaid
+    markCommissionPaid,
+    findLatestBookingByPhone
 };

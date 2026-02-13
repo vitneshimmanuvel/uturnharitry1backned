@@ -21,6 +21,8 @@ const createVendor = async (vendorData) => {
         address: vendorData.address || '',
         gstNumber: vendorData.gstNumber || '',
         city: vendorData.city || '',
+        state: vendorData.state || '',
+        languages: vendorData.languages || [],
         aadharNumber: vendorData.aadharNumber || null,
         panNumber: vendorData.panNumber || null,
         dob: vendorData.dob || null,
