@@ -9,9 +9,14 @@ const fs = require('fs');
 const path = require('path');
 
 // Ensure uploads directory exists
-const uploadDir = path.join(__dirname, '../../public/uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+let uploadDir = path.join(__dirname, '../../public/uploads');
+try {
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
+} catch (error) {
+    console.warn('⚠️ Read-only filesystem detected, using /tmp for uploads:', error.message);
+    uploadDir = '/tmp';
 }
 
 // Helper to save file locally
