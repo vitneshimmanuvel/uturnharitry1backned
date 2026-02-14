@@ -49,13 +49,9 @@ const imageUpload = multer({
  */
 router.post('/create', async (req, res) => {
     try {
+        console.log('[API] Creating booking with data:', JSON.stringify(req.body, null, 2));
         const booking = await bookingModel.createBooking(req.body);
-        
-        // WhatsApp disabled for now (authentication issue)
-        // await whatsappService.sendBookingConfirmation(
-        //     booking.customerPhone,
-        //     booking
-        // );
+        console.log('[API] Booking created successfully:', booking.id);
         
         res.json({
             success: true,
@@ -63,7 +59,7 @@ router.post('/create', async (req, res) => {
             data: booking
         });
     } catch (error) {
-        console.error('Create booking error:', error);
+        console.error('[API] Create booking error:', error);
         res.status(500).json({
             success: false,
             message: error.message

@@ -16,6 +16,8 @@ const mapsRoutes = require('./routes/mapsRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const vehicleRoutes = require('./routes/vehicleRoutes');
 const loanRoutes = require('./routes/loanRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const rateCardRoutes = require('./routes/rateCardRoutes');
 
 // Import database setup
 const { setupTables } = require('./utils/dbSetup');
@@ -59,6 +61,8 @@ app.use('/api/maps', mapsRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/loans', loanRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/rate-cards', rateCardRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
