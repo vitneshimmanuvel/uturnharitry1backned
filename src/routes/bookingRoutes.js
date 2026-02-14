@@ -87,7 +87,16 @@ router.get('/nearby', async (req, res) => {
             }
         }
         
-        const bookings = await bookingModel.getNearbyBookings(city, vehicleType);
+        // 2. Get driver availability for filtering
+        let availability = [];
+        if (driverId) {
+            const driver = await driverModel.findDriverById(driverId);
+            if (driver) {
+                availability = driver.availability || [];
+            }
+        }
+        
+        const bookings = await bookingModel.getNearbyBookings(city, vehicleType, 'pending', availability);
         
         res.json({
             success: true,

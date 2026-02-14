@@ -147,8 +147,10 @@ const getBookingById = async (bookingId) => {
 /**
  * Get nearby bookings for drivers (ALL cities)
  */
-const getNearbyBookings = async (city, vehicleType, status = 'pending') => {
-    // IGNORE city and vehicleType - Show ALL pending bookings
+const getNearbyBookings = async (city, vehicleType, status = 'pending', driverAvailability = []) => {
+    console.log(`[NearbyBookings] Filtering for City: ${city}, Vehicle: ${vehicleType}, Availability: ${driverAvailability}`);
+    
+    // Scan all pending bookings
     const result = await docClient.send(new ScanCommand({
         TableName: TABLE_NAME,
         FilterExpression: '#status = :status AND vendorId <> :soloVendor',
@@ -161,7 +163,36 @@ const getNearbyBookings = async (city, vehicleType, status = 'pending') => {
         }
     }));
     
-    return result.Items || [];
+    let bookings = result.Items || [];
+
+    // Apply filters in memory (more flexible for complex logic)
+    if (city && city !== 'All') {
+        bookings = bookings.filter(b => 
+            (b.pickupCity && b.pickupCity.toLowerCase() === city.toLowerCase()) ||
+            (b.pickupAddress && b.pickupAddress.toLowerCase().includes(city.toLowerCase()))
+        );
+    }
+
+    if (vehicleType && vehicleType !== 'All') {
+        bookings = bookings.filter(b => 
+            b.vehicleType && b.vehicleType.toLowerCase() === vehicleType.toLowerCase()
+        );
+    }
+
+    // Filter by driver availability if provided
+    if (driverAvailability && driverAvailability.length > 0) {
+        bookings = bookings.filter(b => {
+            const tripType = b.tripType || 'oneWay';
+            // Simple mapping of tripType to availability categories
+            if (tripType.includes('local')) return driverAvailability.includes('local');
+            if (tripType.includes('outstation')) return driverAvailability.includes('outstation');
+            if (tripType.includes('rental')) return driverAvailability.includes('rental');
+            if (tripType === 'oneWay' || tripType === 'roundTrip') return driverAvailability.includes('local') || driverAvailability.includes('outstation');
+            return true; // Default
+        });
+    }
+    
+    return bookings;
 };
 
 /**
