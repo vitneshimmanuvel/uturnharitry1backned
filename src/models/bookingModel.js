@@ -3,6 +3,7 @@ const { DynamoDBDocumentClient, PutCommand, ScanCommand, GetCommand, UpdateComma
 const { v4: uuidv4 } = require('uuid');
 const driverModel = require('./driverModel');
 const referralModel = require('./referralModel'); // Import to fetch driver details
+const fs = require('fs'); // Added for debug logging
 
 // DynamoDB Setup
 const client = new DynamoDBClient({
@@ -183,12 +184,27 @@ const getNearbyBookings = async (city, vehicleType, status = 'pending', driverAv
     if (driverAvailability && driverAvailability.length > 0) {
         bookings = bookings.filter(b => {
             const tripType = b.tripType || 'oneWay';
-            // Simple mapping of tripType to availability categories
-            if (tripType.includes('local')) return driverAvailability.includes('local');
-            if (tripType.includes('outstation')) return driverAvailability.includes('outstation');
-            if (tripType.includes('rental')) return driverAvailability.includes('rental');
-            if (tripType === 'oneWay' || tripType === 'roundTrip') return driverAvailability.includes('local') || driverAvailability.includes('outstation');
-            return true; // Default
+            
+            // Map booking trip types to driver availability categories
+            if (tripType === 'oneWay') {
+                // oneWay can be Daily or Outstation depending on distance, 
+                // but usually drivers with either category should see it.
+                return driverAvailability.includes('daily') || driverAvailability.includes('outstation');
+            }
+            if (tripType === 'roundTrip' || tripType === 'round') {
+                return driverAvailability.includes('round');
+            }
+            if (tripType === 'localHourly' || tripType === 'localDriverAllowance' || tripType === 'rental') {
+                return driverAvailability.includes('rental');
+            }
+            if (tripType === 'outstation') {
+                return driverAvailability.includes('outstation');
+            }
+            if (tripType === 'tourPackage') {
+                return driverAvailability.includes('tourPackage');
+            }
+            
+            return true; // Default for any unmapped types
         });
     }
     
@@ -316,8 +332,8 @@ const acceptBooking = async (bookingId, driverId) => {
 
     // 2. Prepare driver info to denormalize into booking
     // Use selfie as profile pic if available
-    // Use selfie as profile pic if available (handle potential undefined structure)
-    const driverProfilePic = (driver.documents && driver.documents.selfie) ? driver.documents.selfie : null; 
+    // Use profilePic (primary) or documents.selfie (legacy fallback)
+    const driverProfilePic = driver.profilePic || (driver.documents && driver.documents.selfie) || null; 
 
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
@@ -481,8 +497,11 @@ const addToWaitingTime = async (bookingId, additionalMinutes) => {
  * Complete trip
  */
 const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUrl, extraCharges) => {
-    const booking = await getBookingById(bookingId);
-    if (!booking) throw new Error('Booking not found');
+    try {
+        const booking = await getBookingById(bookingId);
+        if (!booking) throw new Error('Booking not found');
+    
+    console.log(`[DEBUG] Completing Trip: ${bookingId}, PaymentMethod: ${paymentMethod}, PaymentMode: ${booking.paymentMode}`);
     
     // Calculate actual distance
     const actualDistanceKm = endOdometer - booking.startOdometer;
@@ -507,9 +526,15 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     totalAmount = Math.round(totalAmount);
     
     // Prepare update parameters
+    // Prepare update parameters
     const isCashPayment = paymentMethod === 'cash';
-    const driverStatus = isCashPayment ? 'blocked_for_payment' : 'active';
+    // Only require verification if Cash AND Customer pays Driver
+    const needsVerification = isCashPayment && booking.paymentMode === 'customer_pays_driver';
     
+    const driverStatus = needsVerification ? 'blocked_for_payment' : 'active';
+    
+    console.log(`[DEBUG] Payment Logic: isCash=${isCashPayment}, needsVerify=${needsVerification}, driverStatus=${driverStatus}`);
+
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
@@ -518,22 +543,23 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
             '#status': 'status'
         },
         ExpressionAttributeValues: {
-            ':status': 'completed',
+            ':status': needsVerification ? 'payment_verification_pending' : 'completed', 
             ':endOdo': endOdometer,
             ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
             ':extras': extras,
             ':method': paymentMethod,
-            ':paymentStatus': isCashPayment ? 'pending' : 'completed', // Cash = Pending Commission
+            ':paymentStatus': isCashPayment ? 'pending' : 'completed', 
             ':driverStatus': driverStatus,
             ':now': new Date().toISOString()
         }
     }));
     
     // Sync blocking status to Driver entity if Cash Payment
+    // Sync blocking status to Driver entity if Verification Needed
     if (booking.assignedDriverId) {
-        if (isCashPayment) {
+        if (needsVerification) {
             await driverModel.updateDriver(booking.assignedDriverId, { status: 'blocked_for_payment' });
         }
         
@@ -559,7 +585,12 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
         }
     }
     
-    return await getBookingById(bookingId);
+        return await getBookingById(bookingId);
+    } catch (error) {
+        console.error('COMPLETE TRIP ERROR:', error);
+        fs.appendFileSync('complete_trip_error.log', `${new Date().toISOString()} - ${error.stack}\n`);
+        throw error;
+    }
 };
 
 /**
@@ -575,6 +606,37 @@ const getBookingByTrackingId = async (trackingId) => {
     }));
     
     return result.Items?.[0] || null;
+};
+
+/**
+ * Update booking with any fields
+ */
+/**
+ * Verify Cash Payment (Vendor)
+ */
+const verifyCashPayment = async (bookingId) => {
+    const booking = await getBookingById(bookingId);
+    if (!booking) throw new Error('Booking not found');
+    
+    // Update booking status
+    // Step 1: Verify Cash -> Move to Commission Pending
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId },
+        UpdateExpression: 'SET #status = :status, paymentStatus = :paymentStatus, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':status': 'commission_pending', // Driver still blocked
+            ':paymentStatus': 'completed', // Customer paid driver
+            ':now': new Date().toISOString()
+        }
+    }));
+
+    // DO NOT unblock driver yet. Wait for commission payment.
+    
+    return await getBookingById(bookingId);
 };
 
 /**
@@ -616,7 +678,7 @@ const hasActiveBooking = async (driverId) => {
     // Fallback to Scan
     const scanParams = {
         TableName: TABLE_NAME,
-        FilterExpression: 'assignedDriverId = :driverId AND #status IN (:accepted, :approved, :in_progress)',
+        FilterExpression: 'assignedDriverId = :driverId AND #status IN (:accepted, :approved, :in_progress, :payment_pending)',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
@@ -624,7 +686,8 @@ const hasActiveBooking = async (driverId) => {
             ':driverId': driverId,
             ':accepted': 'driver_accepted',
             ':approved': 'vendor_approved',
-            ':in_progress': 'in_progress'
+            ':in_progress': 'in_progress',
+            ':payment_pending': 'payment_verification_pending'
         }
     };
 
@@ -632,25 +695,71 @@ const hasActiveBooking = async (driverId) => {
     return result.Items && result.Items.length > 0;
 };
 
-const markCommissionPaid = async (bookingId) => {
+// Step 2: Driver marks commission as paid
+const payCommission = async (bookingId) => {
     const booking = await getBookingById(bookingId);
     if (!booking) throw new Error('Booking not found');
     
-    // 1. Mark booking commission as paid
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET commissionStatus = :status, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
         ExpressionAttributeValues: {
-            ':status': 'paid',
+            ':status': 'commission_verification_pending',
+            ':commissionStatus': 'paid_by_driver', // Waiting for vendor approval
             ':now': new Date().toISOString()
         }
     }));
     
-    // 2. Unblock driver (Set status to active)
+    return await getBookingById(bookingId);
+};
+
+// Step 3: Vendor approves commission
+const approveCommission = async (bookingId) => {
+    const booking = await getBookingById(bookingId);
+    if (!booking) throw new Error('Booking not found');
+    
+    // Mark booking commission as received and complete
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId },
+        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':status': 'completed',
+            ':commissionStatus': 'received',
+            ':now': new Date().toISOString()
+        }
+    }));
+    
+    // Unblock driver
     if (booking.assignedDriverId) {
         await driverModel.updateDriver(booking.assignedDriverId, { status: 'active' });
     }
+    
+    return await getBookingById(bookingId);
+};
+
+// Step 3b: Vendor rejects commission
+const rejectCommission = async (bookingId) => {
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId },
+        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':status': 'commission_pending', // Back to simplified pending state
+            ':commissionStatus': 'rejected',
+            ':now': new Date().toISOString()
+        }
+    }));
     
     return await getBookingById(bookingId);
 };
@@ -696,8 +805,11 @@ module.exports = {
     startTrip,
     addToWaitingTime,
     completeTrip,
+    verifyCashPayment,
     updateBooking,
     hasActiveBooking,
-    markCommissionPaid,
+    payCommission,
+    approveCommission,
+    rejectCommission,
     findLatestBookingByPhone
 };

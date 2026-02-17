@@ -9,6 +9,7 @@ const videoService = require('../services/videoService');
 const whatsappService = require('../services/whatsappService');
 const s3Service = require('../services/s3Service');
 const { authMiddleware, vendorOnly } = require('../middleware/auth');
+const fs = require('fs'); // Added for debug logging
 
 // Generate unique tracking ID
 const generateTrackingId = () => {
@@ -493,7 +494,7 @@ router.patch('/:id/waiting-time', async (req, res) => {
  * POST /api/bookings/:id/complete
  * Complete trip
  */
-router.post('/:id/complete', imageUpload.single('image'), async (req, res) => {
+router.post('/:id/complete', imageUpload.single('endOdometerPhoto'), async (req, res) => {
     try {
         const { endOdometer, paymentMethod, extraCharges } = req.body;
         
@@ -539,6 +540,7 @@ router.post('/:id/complete', imageUpload.single('image'), async (req, res) => {
         });
     } catch (error) {
         console.error('Complete trip error:', error);
+        fs.appendFileSync('route_error.log', `${new Date().toISOString()} - ROUTE COMPLETE ERROR: ${error.stack}\n`);
         res.status(500).json({
             success: false,
             message: error.message
@@ -653,16 +655,38 @@ router.post('/:id/generate-tracking', async (req, res) => {
 });
 
 /**
+ * POST /api/bookings/:id/verify-payment
+ * Vendor verifies that driver collected cash payment
+ */
+router.post('/:id/verify-payment', async (req, res) => {
+    try {
+        const booking = await bookingModel.verifyCashPayment(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Payment verified. Driver unblocked.',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Verify payment error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
  * POST /api/bookings/:id/pay-commission
  * Mark commission as paid and unblock driver
  */
 router.post('/:id/pay-commission', async (req, res) => {
     try {
-        const booking = await bookingModel.markCommissionPaid(req.params.id);
+        const booking = await bookingModel.payCommission(req.params.id);
         
         res.json({
             success: true,
-            message: 'Commission marked as paid. Driver unblocked.',
+            message: 'Commission payment marked. Waiting for vendor verification.',
             data: booking
         });
     } catch (error) {
@@ -710,6 +734,94 @@ router.post('/:id/reject-driver', async (req, res) => {
         });
     } catch (error) {
         console.error('Reject driver error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/verify-payment
+ * Vendor verifies cash payment collected by driver
+ */
+router.post('/:id/verify-payment', async (req, res) => {
+    try {
+        const booking = await bookingModel.verifyCashPayment(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Cash payment verified. Awaiting commission payment.',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Verify cash payment error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/pay-commission
+ * Driver marks commission as paid
+ */
+router.post('/:id/pay-commission', async (req, res) => {
+    try {
+        const booking = await bookingModel.payCommission(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Commission payment marked. Waiting for vendor verification.',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Pay commission error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/approve-commission
+ * Vendor approves commission payment
+ */
+router.post('/:id/approve-commission', async (req, res) => {
+    try {
+        const booking = await bookingModel.approveCommission(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Commission approved. Driver unblocked.',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Approve commission error:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/bookings/:id/reject-commission
+ * Vendor rejects commission payment
+ */
+router.post('/:id/reject-commission', async (req, res) => {
+    try {
+        const booking = await bookingModel.rejectCommission(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Commission payment rejected.',
+            data: booking
+        });
+    } catch (error) {
+        console.error('Reject commission error:', error);
         res.status(500).json({
             success: false,
             message: error.message

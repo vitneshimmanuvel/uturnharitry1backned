@@ -41,6 +41,7 @@ const TABLES = {
   bookings: "uturn-bookings",
   vehicles: "uturn-vehicles",
   loans: "uturn-loans",
+  SOLO_RIDES: "uturn-solo-rides",
 };
 
 // Alias for TABLE_NAMES

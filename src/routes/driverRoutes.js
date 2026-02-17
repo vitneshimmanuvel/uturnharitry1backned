@@ -46,6 +46,37 @@ router.post('/check-phone', async (req, res) => {
     }
 });
 
+// Check for existing customer by phone (from past bookings) - for solo ride auto-fill
+router.post('/check-customer', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone || phone.length < 10) {
+            return res.json({ success: false, message: 'Enter valid phone number' });
+        }
+        
+        const booking = await bookingModel.findLatestBookingByPhone(phone);
+        
+        if (booking) {
+            res.json({
+                success: true,
+                found: true,
+                customer: {
+                    name: booking.customerName,
+                    language: booking.customerLanguage || 'Tamil'
+                }
+            });
+        } else {
+            res.json({
+                success: true,
+                found: false,
+                message: 'Customer not found'
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Check failed', error: error.message });
+    }
+});
+
 // Check if Aadhaar number is already registered (real-time validation)
 router.post('/check-aadhaar', async (req, res) => {
     try {
@@ -332,8 +363,9 @@ router.put('/documents', authMiddleware, driverOnly, async (req, res) => {
 // Toggle online status with availability
 router.put('/online-status', authMiddleware, driverOnly, async (req, res) => {
     try {
-        const { isOnline, availability } = req.body;
-        const updatedDriver = await setDriverOnlineStatus(req.user.id, isOnline, availability || []);
+        const { isOnline, availability, availabilities } = req.body;
+        const finalAvailability = availabilities || availability || [];
+        const updatedDriver = await setDriverOnlineStatus(req.user.id, isOnline, finalAvailability);
         res.json({ 
             success: true, 
             message: `You are now ${isOnline ? 'online' : 'offline'}`,
@@ -354,45 +386,38 @@ router.get('/online', authMiddleware, async (req, res) => {
     }
 });
 
-// Create SOLO Trip (Driver Direct Booking)
+// Create SOLO Trip (Driver Direct Booking) — separate table
 router.post('/solo-trip', authMiddleware, driverOnly, async (req, res) => {
-    // ... existing implementation ...
     try {
-        const { createBooking, acceptBooking } = require('../models/bookingModel');
+        const { createSoloRide } = require('../models/soloRideModel');
         const driver = await findDriverById(req.user.id);
         
-        // 1. Create Booking
-        const bookingData = {
-            ...req.body,
-            vendorId: 'SOLO_RIDE', // Special flag
-            status: 'pending', // Will be accepted immediately
-            category: 'Private',
-            tripType: 'oneWay', // Default
-            scheduleDate: req.body.scheduleDate || new Date().toISOString(),
-            scheduleTime: req.body.scheduleTime || 'Now',
-            
-            // Commission Free
-            vendorCommission: 0,
-            
-            // Driver Vehicle Info
-            vehicleType: driver.vehicleType,
-            vehicleBrand: driver.vehicleBrand,
-            vehicleModel: driver.vehicleModel,
-        };
-        
-        const booking = await createBooking(bookingData);
-        
-        // 2. Auto-Accept by Driver
-        const acceptedBooking = await acceptBooking(booking.id, driver.id);
+        const ride = await createSoloRide(req.body, driver);
         
         res.json({
             success: true,
-            message: 'Solo trip started successfully',
-            data: { booking: acceptedBooking }
+            message: 'Solo ride created successfully',
+            data: ride
         });
     } catch (error) {
         console.error('Solo trip error:', error);
-        res.status(500).json({ success: false, message: 'Failed to create solo trip', error: error.message });
+        res.status(500).json({ success: false, message: 'Failed to create solo ride', error: error.message });
+    }
+});
+
+// Get Driver's Solo Rides
+router.get('/solo-trips', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { getSoloRides } = require('../models/soloRideModel');
+        const rides = await getSoloRides(req.user.id);
+        
+        res.json({
+            success: true,
+            data: rides
+        });
+    } catch (error) {
+        console.error('Get solo rides error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch solo rides', error: error.message });
     }
 });
 
