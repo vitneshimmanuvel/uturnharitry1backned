@@ -133,14 +133,7 @@ const createBooking = async (bookingData) => {
 /**
  * Get booking by ID
  */
-const getBookingById = async (bookingId) => {
-    const result = await docClient.send(new GetCommand({
-        TableName: TABLE_NAME,
-        Key: { id: bookingId }
-    }));
-    
-    return result.Item;
-};
+
 
 /**
  * Get nearby bookings for drivers (by city)
@@ -316,12 +309,60 @@ const getDriverBookings = async (driverId, status = null) => {
     }
     
     const result = await docClient.send(new ScanCommand(params));
-    return result.Items || [];
+    let bookings = result.Items || [];
+
+    // Fetch vendor details for each booking
+    const vendorModel = require('./vendorModel');
+    bookings = await Promise.all(bookings.map(async (booking) => {
+        if (booking.vendorId) {
+            try {
+                const vendor = await vendorModel.findVendorById(booking.vendorId);
+                if (vendor) {
+                    booking.vendor = {
+                        businessName: vendor.businessName,
+                        ownerName: vendor.ownerName,
+                        phone: vendor.phone
+                    };
+                }
+            } catch (e) {
+                console.error(`Failed to fetch vendor for booking ${booking.id}:`, e);
+            }
+        }
+        return booking;
+    }));
+
+    return bookings;
 };
 
 /**
- * Driver accepts booking
+ * Get booking by ID
  */
+const getBookingById = async (bookingId) => {
+    const result = await docClient.send(new GetCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId }
+    }));
+    
+    let booking = result.Item;
+
+    if (booking && booking.vendorId) {
+         const vendorModel = require('./vendorModel');
+         try {
+            const vendor = await vendorModel.findVendorById(booking.vendorId);
+            if (vendor) {
+                booking.vendor = {
+                    businessName: vendor.businessName,
+                    ownerName: vendor.ownerName,
+                    phone: vendor.phone
+                };
+            }
+        } catch (e) {
+            console.error(`Failed to fetch vendor for booking ${booking.id}:`, e);
+        }
+    }
+    
+    return booking;
+};
 const acceptBooking = async (bookingId, driverId) => {
     // 1. Fetch driver details first
     const driver = await driverModel.findDriverById(driverId);
