@@ -54,6 +54,10 @@ const createDriver = async (driverData) => {
         insuranceId: driverData.insuranceId || null,
         insuranceExpiry: driverData.insuranceExpiry || null,
         fcExpiry: driverData.fcExpiry || null,
+        tripType: driverData.tripType || null,
+        fuelType: driverData.fuelType || null,
+        vehicleYear: driverData.vehicleYear || null,
+        vehicles: driverData.vehicles || [],
         
         // Profile picture URL
         profilePic: driverData.profilePic || null,
@@ -67,10 +71,15 @@ const createDriver = async (driverData) => {
 
         documents: driverData.documents || {
             selfie: null,
-            aadhar: null,
-            licence: null,
-            rcBook: null,
-            insurance: null
+            aadharFront: null,
+            aadharBack: null,
+            licenceFront: null,
+            licenceBack: null,
+            rcFront: null,
+            rcBack: null,
+            insuranceFront: null,
+            insuranceBack: null,
+            permit: null
         },
         
         referralCode, // Store for easy display

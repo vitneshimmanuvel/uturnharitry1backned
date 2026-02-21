@@ -201,7 +201,11 @@ router.post('/register', async (req, res) => {
             rcNumber,
             insuranceId,
             insuranceExpiry,
-            fcExpiry
+            fcExpiry,
+            tripType,
+            fuelType,
+            vehicleYear,
+            vehicles // Array of vehicles
         } = req.body;
 
         // Only name and phone are required
@@ -238,6 +242,10 @@ router.post('/register', async (req, res) => {
             insuranceId: insuranceId || null,
             insuranceExpiry: insuranceExpiry || null,
             fcExpiry: fcExpiry || null,
+            tripType: tripType || null,
+            fuelType: fuelType || null,
+            vehicleYear: vehicleYear || null,
+            vehicles: vehicles || [], // Array of additional vehicles
             state: req.body.state,
             languages: req.body.languages,
             referredBy: req.body.referredBy // Pass referral code

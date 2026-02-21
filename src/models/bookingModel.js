@@ -74,8 +74,8 @@ const createBooking = async (bookingData) => {
         estimatedDurationMins: bookingData.estimatedDurationMins,
         
         // Schedule
-        scheduleDate: bookingData.scheduleDate,
-        scheduleTime: bookingData.scheduleTime,
+        scheduleDate: bookingData.scheduleDate || bookingData.scheduledDate,
+        scheduleTime: bookingData.scheduleTime || bookingData.scheduledTime,
         returnDate: bookingData.returnDate,
         returnTime: bookingData.returnTime,
         
@@ -86,7 +86,8 @@ const createBooking = async (bookingData) => {
         estimatedHours: bookingData.estimatedHours || 0,
         nightAllowance: bookingData.nightAllowance || 0,
         hillsAllowance: bookingData.hillsAllowance || 0,
-        waitingChargesPerHour: bookingData.waitingChargesPerHour || 0,
+        waitingChargesPerHour: bookingData.waitingChargesPerHour || bookingData.waitingCharges || 0,
+        waitingCharges: bookingData.waitingCharges || (bookingData.waitingChargesPerHour ? (bookingData.waitingChargesPerHour / 60) : 0), // Save per-min for clarity
         extraCharges: bookingData.extraCharges || 0,
         tollCharges: bookingData.tollCharges || 0,
         driverAllowance: bookingData.driverAllowance || 0,
@@ -380,11 +381,13 @@ const acceptBooking = async (bookingId, driverId) => {
         TableName: TABLE_NAME,
         Key: { id: bookingId },
         UpdateExpression: 'SET #status = :status, assignedDriverId = :driverId, driverName = :dName, driverPhone = :dPhone, vehicleNumber = :vNum, vehicleType = :vType, driverProfilePic = :dPic, updatedAt = :now',
+        ConditionExpression: '#status = :pending',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': 'driver_accepted',
+            ':pending': 'pending',
             ':driverId': driverId,
             ':dName': driver.name,
             ':dPhone': driver.phone,
@@ -431,11 +434,13 @@ const approveDriver = async (bookingId) => {
         TableName: TABLE_NAME,
         Key: { id: bookingId },
         UpdateExpression: 'SET #status = :status, updatedAt = :now',
+        ConditionExpression: '#status = :accepted',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': 'vendor_approved',
+            ':accepted': 'driver_accepted',
             ':now': new Date().toISOString()
         }
     }));
@@ -451,11 +456,13 @@ const rejectDriver = async (bookingId, reason) => {
         TableName: TABLE_NAME,
         Key: { id: bookingId },
         UpdateExpression: 'SET #status = :status, rejectionReason = :reason, assignedDriverId = :null, driverVideoUrl = :null, updatedAt = :now',
+        ConditionExpression: '#status = :accepted',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': 'pending',
+            ':accepted': 'driver_accepted',
             ':reason': reason,
             ':null': null,
             ':now': new Date().toISOString()
@@ -547,26 +554,39 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     // Calculate actual distance
     const actualDistanceKm = endOdometer - booking.startOdometer;
     
+    // Calculate duration for allowances (days)
+    const startTime = new Date(booking.startTime);
+    const endTime = new Date();
+    const diffMs = endTime - startTime;
+    const diffHours = diffMs / (1000 * 60 * 60);
+    const days = Math.max(1, Math.ceil(diffHours / 24));
+    
     // Calculate total amount
-    let totalAmount = booking.baseFare + (actualDistanceKm * booking.perKmRate);
+    // Formula: baseFare + (actualDistanceKm * perKmRate) + (driverAllowance * days) + (nightAllowance * days) + hillsAllowance + waitingCharges + extraCharges
+    let totalAmount = (booking.baseFare || 0);
     
-    // Add trip type multipliers
-    if (booking.tripType === 'round') totalAmount *= 1.8; // Example logic, verification needed vs vendor app logic
-    else if (booking.tripType === 'rental') totalAmount *= 2.5; 
+    // 1. Distance Charge
+    totalAmount += (actualDistanceKm * (booking.perKmRate || 0));
     
-    // Add waiting charges
+    // 2. Allowances (Driver Bata & Night are per-day)
+    totalAmount += ((booking.driverAllowance || 0) * days);
+    totalAmount += ((booking.nightAllowance || 0) * days);
+    
+    // 3. Hills Allowance (Flat)
+    totalAmount += (booking.hillsAllowance || 0);
+    
+    // 4. Waiting Charges (Accumulated during trip)
     if (booking.waitingTimeMins > 0) {
-        const waitingCharges = (booking.waitingChargesPerHour / 60) * booking.waitingTimeMins;
-        totalAmount += waitingCharges;
+        const ratePerMin = booking.waitingCharges || 0; 
+        totalAmount += (ratePerMin * booking.waitingTimeMins);
     }
 
-    // Add Extra Charges (Toll, Parking, etc.)
+    // 5. Extra Charges (Toll, Parking, etc.) passed at completion
     const extras = Number(extraCharges) || 0;
     totalAmount += extras;
     
     totalAmount = Math.round(totalAmount);
     
-    // Prepare update parameters
     // Prepare update parameters
     const isCashPayment = paymentMethod === 'cash';
     // Only require verification if Cash AND Customer pays Driver
@@ -574,6 +594,7 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     
     const driverStatus = needsVerification ? 'blocked_for_payment' : 'active';
     
+    console.log(`[DEBUG] Final Fare: ${totalAmount} (Base: ${booking.baseFare}, Dist: ${actualDistanceKm}, Rate: ${booking.perKmRate}, Days: ${days}, Bata: ${booking.driverAllowance}, Hills: ${booking.hillsAllowance}, WaitMins: ${booking.waitingTimeMins}, extras: ${extras})`);
     console.log(`[DEBUG] Payment Logic: isCash=${isCashPayment}, needsVerify=${needsVerification}, driverStatus=${driverStatus}`);
 
     await docClient.send(new UpdateCommand({
