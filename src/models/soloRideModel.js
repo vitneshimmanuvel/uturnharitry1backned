@@ -90,7 +90,8 @@ const createSoloRide = async (rideData, driver) => {
         estimatedHours: rideData.estimatedHours || 0,
         nightAllowance: rideData.nightAllowance || 0,
         hillsAllowance: rideData.hillsAllowance || 0,
-        waitingChargesPerHour: rideData.waitingChargesPerHour || 0,
+        waitingChargesPerMin: rideData.waitingChargesPerMin || (rideData.waitingChargesPerHour ? (rideData.waitingChargesPerHour / 60) : 0),
+        waitingChargesPerHour: rideData.waitingChargesPerHour || ((rideData.waitingChargesPerMin || 0) * 60) || 0,
         extraCharges: rideData.extraCharges || 0,
         driverAllowance: rideData.driverAllowance || 0,
         rentalPackagePrice: rideData.rentalPackagePrice || 0,
@@ -147,6 +148,26 @@ const getSoloRides = async (driverId) => {
 };
 
 /**
+ * Find latest solo ride by customer phone
+ * @param {string} phone - Customer phone
+ * @returns {Promise<Object|null>} Latest ride or null
+ */
+const findLatestSoloRideByPhone = async (phone) => {
+    const result = await docClient.send(new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: 'customerPhone = :phone',
+        ExpressionAttributeValues: { ':phone': phone },
+    }));
+
+    const rides = result.Items || [];
+    if (rides.length === 0) return null;
+
+    // Sort by createdAt descending and return first
+    rides.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return rides[0];
+};
+
+/**
  * Get a solo ride by ID
  * @param {string} rideId - Ride ID
  * @returns {Promise<Object|null>} Ride data or null
@@ -157,6 +178,110 @@ const getSoloRideById = async (rideId) => {
         Key: { id: rideId },
     }));
     return result.Item || null;
+};
+
+/**
+ * Start solo trip
+ */
+const startSoloTrip = async (rideId, startOdometer, otp, startOdometerUrl) => {
+    const ride = await getSoloRideById(rideId);
+    if (!ride) throw new Error('Solo ride not found');
+    
+    // Solo trips might not strictly require OTP in all flows, but if provided, we can validate.
+    // For now, mirroring bookingModel logic.
+    
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: 'SET #status = :status, startOdometer = :startOdo, startOdometerUrl = :startOdoUrl, startTime = :now, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':status': 'in_progress',
+            ':startOdo': Number(startOdometer),
+            ':startOdoUrl': startOdometerUrl || null,
+            ':now': new Date().toISOString()
+        }
+    }));
+    
+    return await getSoloRideById(rideId);
+};
+
+/**
+ * Add to solo waiting time
+ */
+const addToSoloWaitingTime = async (rideId, additionalMinutes) => {
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: 'SET waitingTimeMins = if_not_exists(waitingTimeMins, :zero) + :mins, updatedAt = :now',
+        ExpressionAttributeValues: {
+            ':mins': Number(additionalMinutes),
+            ':zero': 0,
+            ':now': new Date().toISOString()
+        }
+    }));
+    
+    return await getSoloRideById(rideId);
+};
+
+/**
+ * Complete solo trip
+ */
+const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerUrl, extraCharges) => {
+    const ride = await getSoloRideById(rideId);
+    if (!ride) throw new Error('Solo ride not found');
+
+    const startOdo = Number(ride.startOdometer);
+    const endOdo = Number(endOdometer);
+    const actualDistanceKm = endOdo - startOdo;
+    
+    // Duration for allowances
+    const startTime = new Date(ride.startTime);
+    const endTime = new Date();
+    const diffMs = endTime - startTime;
+    const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+
+    // Calculate fare (simplified mirror of bookingModel)
+    let totalAmount = (Number(ride.baseFare) || 0);
+    totalAmount += (actualDistanceKm * (Number(ride.perKmRate) || 0));
+    totalAmount += ((Number(ride.driverAllowance) || 0) * days);
+    totalAmount += ((Number(ride.nightAllowance) || 0) * days);
+    totalAmount += (Number(ride.hillsAllowance) || 0);
+    
+    if (ride.waitingTimeMins > 0) {
+        totalAmount += (ride.waitingTimeMins * (Number(ride.waitingChargesPerMin) || 0));
+    }
+    
+    totalAmount += (Number(extraCharges) || 0);
+    totalAmount = Math.round(totalAmount);
+
+    const isCash = paymentMethod === 'cash';
+    // For Solo rides, we usually assume customer pays driver directly unless specified
+    const needsVerification = isCash; 
+
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':status': 'completed',
+            ':endOdo': endOdo,
+            ':endOdoUrl': endOdometerUrl || null,
+            ':distance': actualDistanceKm,
+            ':total': totalAmount,
+            ':extras': Number(extraCharges) || 0,
+            ':method': paymentMethod,
+            ':paymentStatus': 'completed',
+            ':now': new Date().toISOString()
+        }
+    }));
+
+    return await getSoloRideById(rideId);
 };
 
 /**
@@ -198,5 +323,9 @@ module.exports = {
     getSoloRides,
     getSoloRideById,
     updateSoloRide,
+    startSoloTrip,
+    completeSoloTrip,
+    addToSoloWaitingTime,
+    findLatestSoloRideByPhone,
     TABLE_NAME,
 };

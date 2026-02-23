@@ -86,8 +86,9 @@ const createBooking = async (bookingData) => {
         estimatedHours: bookingData.estimatedHours || 0,
         nightAllowance: bookingData.nightAllowance || 0,
         hillsAllowance: bookingData.hillsAllowance || 0,
-        waitingChargesPerHour: bookingData.waitingChargesPerHour || bookingData.waitingCharges || 0,
-        waitingCharges: bookingData.waitingCharges || (bookingData.waitingChargesPerHour ? (bookingData.waitingChargesPerHour / 60) : 0), // Save per-min for clarity
+        waitingChargesPerMin: bookingData.waitingChargesPerMin || (bookingData.waitingChargesPerHour ? (bookingData.waitingChargesPerHour / 60) : (bookingData.waitingCharges || 0)),
+        waitingChargesPerHour: bookingData.waitingChargesPerHour || ((bookingData.waitingChargesPerMin || 0) * 60) || 0,
+        waitingCharges: bookingData.waitingCharges || bookingData.waitingChargesPerMin || (bookingData.waitingChargesPerHour ? (bookingData.waitingChargesPerHour / 60) : 0),
         extraCharges: bookingData.extraCharges || 0,
         tollCharges: bookingData.tollCharges || 0,
         driverAllowance: bookingData.driverAllowance || 0,
@@ -552,7 +553,7 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     console.log(`[DEBUG] Completing Trip: ${bookingId}, PaymentMethod: ${paymentMethod}, PaymentMode: ${booking.paymentMode}`);
     
     // Calculate actual distance
-    const actualDistanceKm = endOdometer - booking.startOdometer;
+    const actualDistanceKm = Math.max(0, endOdometer - booking.startOdometer);
     
     // Calculate duration for allowances (days)
     const startTime = new Date(booking.startTime);
@@ -585,7 +586,7 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     const extras = Number(extraCharges) || 0;
     totalAmount += extras;
     
-    totalAmount = Math.round(totalAmount);
+    totalAmount = Math.max(0, Math.round(totalAmount));
     
     // Prepare update parameters
     const isCashPayment = paymentMethod === 'cash';

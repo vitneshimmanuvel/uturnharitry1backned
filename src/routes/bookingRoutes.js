@@ -5,9 +5,11 @@ const path = require('path');
 const crypto = require('crypto');
 const bookingModel = require('../models/bookingModel');
 const driverModel = require('../models/driverModel');
+const soloRideModel = require('../models/soloRideModel');
 const videoService = require('../services/videoService');
 const whatsappService = require('../services/whatsappService');
 const s3Service = require('../services/s3Service');
+const { checkOverlap } = require('../services/availabilityService');
 const { authMiddleware, vendorOnly } = require('../middleware/auth');
 const fs = require('fs'); // Added for debug logging
 
@@ -166,8 +168,16 @@ router.get('/driver/:driverId', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
     try {
-        const booking = await bookingModel.getBookingById(req.params.id);
+        let booking = await bookingModel.getBookingById(req.params.id);
         
+        if (!booking) {
+            // Check Solo Rides table
+            booking = await soloRideModel.getSoloRideById(req.params.id);
+            if (booking) {
+                booking.isSolo = true;
+            }
+        }
+
         if (!booking) {
             return res.status(404).json({
                 success: false,
@@ -226,6 +236,24 @@ router.post('/:id/accept', async (req, res) => {
                 success: false,
                 message: 'Driver ID required'
             });
+        }
+
+        // Overlap Check
+        const bookingToAccept = await bookingModel.getBookingById(req.params.id);
+        if (bookingToAccept) {
+            const startStr = `${bookingToAccept.scheduleDate}T${bookingToAccept.scheduleTime}`;
+            const endStr = (bookingToAccept.returnDate && bookingToAccept.returnTime)
+                ? `${bookingToAccept.returnDate}T${bookingToAccept.returnTime}`
+                : new Date(new Date(startStr).getTime() + 4 * 60 * 60 * 1000).toISOString();
+            
+            const availability = await checkOverlap(driverId, startStr, endStr);
+            if (availability.overlap) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Slot taken: You already have a booking during this time slot.',
+                    conflict: availability.conflict
+                });
+            }
         }
         
         const booking = await bookingModel.acceptBooking(req.params.id, driverId);
@@ -417,7 +445,6 @@ router.post('/:id/generate-otp', async (req, res) => {
         });
     }
 });
-
 router.post('/:id/start-trip', imageUpload.single('image'), async (req, res) => {
     try {
         const { startOdometer, otp } = req.body;
@@ -429,6 +456,16 @@ router.post('/:id/start-trip', imageUpload.single('image'), async (req, res) => 
             });
         }
 
+        let booking = await bookingModel.getBookingById(req.params.id);
+        let isSolo = false;
+
+        if (!booking) {
+            booking = await soloRideModel.getSoloRideById(req.params.id);
+            if (booking) isSolo = true;
+        }
+
+        if (!booking) throw new Error('Ride not found');
+
         let startOdometerUrl = null;
         if (req.file) {
              const uploadResult = await s3Service.uploadFile(
@@ -438,18 +475,16 @@ router.post('/:id/start-trip', imageUpload.single('image'), async (req, res) => 
                 req.file.mimetype
             );
             startOdometerUrl = uploadResult.publicUrl;
-        } else {
-             // Fallback for testing/web without file
-             // return res.status(400).json({ success: false, message: 'Odometer photo required' });
-             console.warn('No odometer photo uploaded for start-trip');
         }
         
-        const booking = await bookingModel.startTrip(req.params.id, startOdometer, otp, startOdometerUrl);
+        const updatedRide = isSolo 
+            ? await soloRideModel.startSoloTrip(req.params.id, startOdometer, otp, startOdometerUrl)
+            : await bookingModel.startTrip(req.params.id, startOdometer, otp, startOdometerUrl);
         
         res.json({
             success: true,
             message: 'Trip started successfully',
-            data: booking
+            data: updatedRide
         });
     } catch (error) {
         console.error('Start trip error:', error);
@@ -460,10 +495,6 @@ router.post('/:id/start-trip', imageUpload.single('image'), async (req, res) => 
     }
 });
 
-/**
- * PATCH /api/bookings/:id/waiting-time
- * Add waiting time (Accumulate)
- */
 router.patch('/:id/waiting-time', async (req, res) => {
     try {
         const { additionalMinutes } = req.body;
@@ -475,11 +506,23 @@ router.patch('/:id/waiting-time', async (req, res) => {
             });
         }
         
-        const booking = await bookingModel.addToWaitingTime(req.params.id, additionalMinutes);
+        let booking = await bookingModel.getBookingById(req.params.id);
+        let isSolo = false;
+
+        if (!booking) {
+            booking = await soloRideModel.getSoloRideById(req.params.id);
+            if (booking) isSolo = true;
+        }
+
+        if (!booking) throw new Error('Ride not found');
+
+        const updatedRide = isSolo
+            ? await soloRideModel.addToSoloWaitingTime(req.params.id, additionalMinutes)
+            : await bookingModel.addToWaitingTime(req.params.id, additionalMinutes);
         
         res.json({
             success: true,
-            data: booking
+            data: updatedRide
         });
     } catch (error) {
         console.error('Add waiting time error:', error);
@@ -490,10 +533,6 @@ router.patch('/:id/waiting-time', async (req, res) => {
     }
 });
 
-/**
- * POST /api/bookings/:id/complete
- * Complete trip
- */
 router.post('/:id/complete', imageUpload.single('endOdometerPhoto'), async (req, res) => {
     try {
         const { endOdometer, paymentMethod, extraCharges } = req.body;
@@ -504,6 +543,16 @@ router.post('/:id/complete', imageUpload.single('endOdometerPhoto'), async (req,
                 message: 'End odometer and payment method required'
             });
         }
+
+        let booking = await bookingModel.getBookingById(req.params.id);
+        let isSolo = false;
+
+        if (!booking) {
+            booking = await soloRideModel.getSoloRideById(req.params.id);
+            if (booking) isSolo = true;
+        }
+
+        if (!booking) throw new Error('Ride not found');
 
         let endOdometerUrl = null;
         if (req.file) {
@@ -516,27 +565,29 @@ router.post('/:id/complete', imageUpload.single('endOdometerPhoto'), async (req,
             endOdometerUrl = uploadResult.publicUrl;
         }
         
-        const booking = await bookingModel.completeTrip(req.params.id, endOdometer, paymentMethod, endOdometerUrl, extraCharges);
+        const updatedRide = isSolo
+            ? await soloRideModel.completeSoloTrip(req.params.id, endOdometer, paymentMethod, endOdometerUrl, extraCharges)
+            : await bookingModel.completeTrip(req.params.id, endOdometer, paymentMethod, endOdometerUrl, extraCharges);
         
-        // Calculate trip data
+        // Calculate trip data (booking or solo - same schema)
         const tripData = {
-            distanceKm: booking.actualDistanceKm,
-            durationMins: Math.round((new Date(booking.endTime) - new Date(booking.startTime)) / 60000),
-            waitingMins: booking.waitingTimeMins,
-            totalAmount: booking.totalAmount
+            distanceKm: updatedRide.actualDistanceKm,
+            durationMins: Math.round((new Date(updatedRide.endTime) - new Date(updatedRide.startTime)) / 60000),
+            waitingMins: updatedRide.waitingTimeMins || 0,
+            totalAmount: updatedRide.totalAmount
         };
         
         // Send trip summary to customer
         await whatsappService.sendTripSummary(
-            booking.customerPhone,
-            booking,
+            updatedRide.customerPhone,
+            updatedRide,
             tripData
         );
         
         res.json({
             success: true,
             message: 'Trip completed successfully',
-            data: booking
+            data: updatedRide
         });
     } catch (error) {
         console.error('Complete trip error:', error);
@@ -595,7 +646,7 @@ router.get('/track/:trackingId', async (req, res) => {
             estimatedDurationMins: booking.estimatedDurationMins,
             packageAmount: booking.packageAmount,
             estimatedFare: booking.estimatedFare,
-            waitingCharges: booking.waitingTimeMins ? (booking.waitingTimeMins * (booking.waitingChargesPerHour || 50) / 60) : 0,
+            waitingCharges: booking.waitingTimeMins ? (booking.waitingTimeMins * (booking.waitingChargesPerMin || booking.waitingCharges || (booking.waitingChargesPerHour / 60) || 0)) : 0,
             totalAmount: booking.totalAmount,
             startTime: booking.startTime,
             endTime: booking.endTime,

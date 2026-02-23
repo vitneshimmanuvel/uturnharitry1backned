@@ -16,7 +16,9 @@ const {
 const { generateToken, authMiddleware, driverOnly } = require('../middleware/auth');
 const driverModel = require('../models/driverModel');
 const bookingModel = require('../models/bookingModel');
+const soloRideModel = require('../models/soloRideModel');
 const referralModel = require('../models/referralModel');
+const { checkOverlap } = require('../services/availabilityService');
 const { getUploadUrl } = require('../services/s3Service');
 const { findDrivers } = require('../models/driverModel');
 
@@ -55,14 +57,23 @@ router.post('/check-customer', async (req, res) => {
         }
         
         const booking = await bookingModel.findLatestBookingByPhone(phone);
+        const soloRide = await soloRideModel.findLatestSoloRideByPhone(phone);
         
-        if (booking) {
+        // Prefer the most recent record to get the most up-to-date customer details
+        let latest = null;
+        if (booking && soloRide) {
+            latest = new Date(booking.createdAt) > new Date(soloRide.createdAt) ? booking : soloRide;
+        } else {
+            latest = booking || soloRide;
+        }
+        
+        if (latest) {
             res.json({
                 success: true,
                 found: true,
                 customer: {
-                    name: booking.customerName,
-                    language: booking.customerLanguage || 'Tamil'
+                    name: latest.customerName,
+                    language: latest.customerLanguage || 'Tamil'
                 }
             });
         } else {
@@ -400,6 +411,20 @@ router.post('/solo-trip', authMiddleware, driverOnly, async (req, res) => {
         const { createSoloRide } = require('../models/soloRideModel');
         const driver = await findDriverById(req.user.id);
         
+        // Overlap Check Logic
+        const startStr = req.body.scheduledDate || new Date().toISOString();
+        const durationHrs = parseInt(req.body.rentalHours) || 4; // Default 4hr for One Way
+        const endStr = req.body.returnDate || new Date(new Date(startStr).getTime() + durationHrs * 60 * 60 * 1000).toISOString();
+        
+        const availability = await checkOverlap(req.user.id, startStr, endStr);
+        if (availability.overlap) {
+            return res.status(409).json({
+                success: false,
+                message: 'Slot taken: You already have a booking during this time.',
+                conflict: availability.conflict
+            });
+        }
+
         const ride = await createSoloRide(req.body, driver);
         
         res.json({
@@ -429,14 +454,26 @@ router.get('/solo-trips', authMiddleware, driverOnly, async (req, res) => {
     }
 });
 
-// Get Driver's Rides (History / Active)
+// Get Driver's Rides (History / Active) - Combines Vendor and Solo
 router.get('/rides', authMiddleware, driverOnly, async (req, res) => {
     try {
         const { getDriverBookings } = require('../models/bookingModel');
-        const rides = await getDriverBookings(req.user.id);
+        const { getSoloRides } = require('../models/soloRideModel');
+        
+        const vendorRides = await getDriverBookings(req.user.id);
+        const soloRides = await getSoloRides(req.user.id);
+        
+        // Mark solo rides as such
+        const adjustedSolo = soloRides.map(r => ({ ...r, isSolo: true }));
+        
+        // Combine and sort by date (newest first)
+        const allRides = [...vendorRides, ...adjustedSolo].sort((a, b) => 
+            new Date(b.createdAt) - new Date(a.createdAt)
+        );
+
         res.json({
             success: true,
-            data: { rides }
+            data: { rides: allRides }
         });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Failed to fetch rides', error: error.message });

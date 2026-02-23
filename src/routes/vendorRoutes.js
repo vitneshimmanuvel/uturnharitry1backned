@@ -84,6 +84,8 @@ router.post('/check-pan', async (req, res) => {
     }
 });
 
+const soloRideModel = require('../models/soloRideModel');
+
 // Check for existing customer by phone (from past bookings)
 router.post('/check-customer', async (req, res) => {
     try {
@@ -93,14 +95,23 @@ router.post('/check-customer', async (req, res) => {
         }
         
         const booking = await bookingModel.findLatestBookingByPhone(phone);
+        const soloRide = await soloRideModel.findLatestSoloRideByPhone(phone);
         
-        if (booking) {
+        // Prefer the most recent record to get the most up-to-date customer details
+        let latest = null;
+        if (booking && soloRide) {
+            latest = new Date(booking.createdAt) > new Date(soloRide.createdAt) ? booking : soloRide;
+        } else {
+            latest = booking || soloRide;
+        }
+        
+        if (latest) {
             res.json({
                 success: true,
                 found: true,
                 customer: {
-                    name: booking.customerName,
-                    language: booking.customerLanguage || 'Tamil'
+                    name: latest.customerName,
+                    language: latest.customerLanguage || 'Tamil'
                 }
             });
         } else {
