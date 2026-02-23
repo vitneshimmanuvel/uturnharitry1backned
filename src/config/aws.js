@@ -42,6 +42,7 @@ const TABLES = {
   vehicles: "uturn-vehicles",
   loans: "uturn-loans",
   SOLO_RIDES: "uturn-solo-rides",
+  MARKETPLACE_REQUESTS: "uturn-marketplace-requests",
 };
 
 // Alias for TABLE_NAMES

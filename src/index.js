@@ -18,6 +18,7 @@ const vehicleRoutes = require('./routes/vehicleRoutes');
 const loanRoutes = require('./routes/loanRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const rateCardRoutes = require('./routes/rateCardRoutes');
+const marketplaceRequestRoutes = require('./routes/marketplaceRequestRoutes');
 
 // Import database setup
 const { setupTables } = require('./utils/dbSetup');
@@ -72,6 +73,7 @@ app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rate-cards', rateCardRoutes);
+app.use('/api/marketplace-requests', marketplaceRequestRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

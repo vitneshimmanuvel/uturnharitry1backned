@@ -208,14 +208,8 @@ router.post('/register', async (req, res) => {
             aadharNumber,
             dob,
             homeLocation,
-            // New fields
-            rcNumber,
-            insuranceId,
-            insuranceExpiry,
-            fcExpiry,
             tripType,
-            fuelType,
-            vehicleYear,
+            // New fields
             vehicles // Array of vehicles
         } = req.body;
 
@@ -249,13 +243,7 @@ router.post('/register', async (req, res) => {
             preferredVehicles,
             aadharNumber: aadharNumber || null,
             dob: dob || null,
-            rcNumber: rcNumber || null,
-            insuranceId: insuranceId || null,
-            insuranceExpiry: insuranceExpiry || null,
-            fcExpiry: fcExpiry || null,
             tripType: tripType || null,
-            fuelType: fuelType || null,
-            vehicleYear: vehicleYear || null,
             vehicles: vehicles || [], // Array of additional vehicles
             state: req.body.state,
             languages: req.body.languages,

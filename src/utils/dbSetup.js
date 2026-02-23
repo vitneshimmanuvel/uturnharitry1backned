@@ -196,6 +196,14 @@ const setupTables = async () => {
     } else {
         console.log(`ℹ️ Table UTurnReferrals already exists`);
     }
+    
+    // Create Marketplace Requests table
+    const marketplaceRequestsExists = await tableExists(TABLES.MARKETPLACE_REQUESTS);
+    if (!marketplaceRequestsExists) {
+        await createMarketplaceRequestsTable();
+    } else {
+        console.log(`ℹ️ Table ${TABLES.MARKETPLACE_REQUESTS} already exists`);
+    }
 };
 
 // Create Wallet table
@@ -250,6 +258,34 @@ const createReferralsTable = async () => {
     } catch (error) {
         if (error.name === 'ResourceInUseException') {
             console.log(`ℹ️ Table UTurnReferrals already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Create Marketplace Requests table
+const createMarketplaceRequestsTable = async () => {
+    const params = {
+        TableName: TABLES.MARKETPLACE_REQUESTS,
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table ${TABLES.MARKETPLACE_REQUESTS} created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table ${TABLES.MARKETPLACE_REQUESTS} already exists`);
         } else {
             throw error;
         }
