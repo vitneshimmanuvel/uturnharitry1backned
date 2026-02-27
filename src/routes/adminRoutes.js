@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { docClient, TABLES } = require('../config/aws');
-const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { ScanCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 
 router.get('/', (req, res) => {
     res.json({ message: 'Admin API working' });
@@ -89,6 +89,12 @@ router.get('/detailed-dashboard', async (req, res) => {
         const activeDriversToday = (driversResult.Items || []).filter(d => 
             d.updatedAt && d.updatedAt.startsWith(todayStr)
         ).length;
+        const verifiedDrivers = (driversResult.Items || []).filter(d => d.isVerified === true).length;
+        const pendingDrivers = totalDrivers - verifiedDrivers;
+        const verifiedVendors = (vendorsResult.Items || []).filter(v => v.isVerified === true).length;
+        const pendingVendors = totalVendors - verifiedVendors;
+        const blockedDrivers = (driversResult.Items || []).filter(d => d.status === 'blocked').length;
+        const blockedVendors = (vendorsResult.Items || []).filter(v => v.status === 'blocked').length;
 
         // 3. Rides (Today's specifically)
         const bookingsResult = await docClient.send(new ScanCommand({ TableName: TABLES.BOOKINGS }));
@@ -105,10 +111,17 @@ router.get('/detailed-dashboard', async (req, res) => {
             data: {
                 totalVendors,
                 activeVendorsToday,
+                verifiedVendors,
+                pendingVendors,
+                blockedVendors,
                 totalDrivers,
                 onlineDrivers,
                 activeDriversToday,
+                verifiedDrivers,
+                pendingDrivers,
+                blockedDrivers,
                 totalRidesToday: todayRides.length,
+                totalRidesAllTime: allRides.length,
                 activeRidesToday: activeToday,
                 completedRidesToday: completedToday
             }
@@ -156,12 +169,57 @@ router.get('/self-rides', async (req, res) => {
     }
 });
 
+// Approve/Verify a driver
+router.patch('/drivers/:id/verify', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { verified } = req.body;
+        
+        await docClient.send(new UpdateCommand({
+            TableName: TABLES.DRIVERS,
+            Key: { id },
+            UpdateExpression: 'SET isVerified = :verified, updatedAt = :now',
+            ExpressionAttributeValues: {
+                ':verified': verified,
+                ':now': new Date().toISOString(),
+            },
+        }));
+
+        res.json({ success: true, message: verified ? 'Driver approved' : 'Driver approval revoked' });
+    } catch (error) {
+        console.error('Admin API error verifying driver:', error);
+        res.status(500).json({ success: false, message: 'Failed to verify driver', error: error.message });
+    }
+});
+
+// Approve/Verify a vendor
+router.patch('/vendors/:id/verify', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { verified } = req.body;
+        
+        await docClient.send(new UpdateCommand({
+            TableName: TABLES.VENDORS,
+            Key: { id },
+            UpdateExpression: 'SET isVerified = :verified, updatedAt = :now',
+            ExpressionAttributeValues: {
+                ':verified': verified,
+                ':now': new Date().toISOString(),
+            },
+        }));
+
+        res.json({ success: true, message: verified ? 'Vendor approved' : 'Vendor approval revoked' });
+    } catch (error) {
+        console.error('Admin API error verifying vendor:', error);
+        res.status(500).json({ success: false, message: 'Failed to verify vendor', error: error.message });
+    }
+});
+
 // Block/Unblock a driver
 router.patch('/drivers/:id/block', async (req, res) => {
     try {
         const { id } = req.params;
-        const { blocked } = req.body; // true = block, false = unblock
-        const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+        const { blocked } = req.body;
         
         await docClient.send(new UpdateCommand({
             TableName: TABLES.DRIVERS,
