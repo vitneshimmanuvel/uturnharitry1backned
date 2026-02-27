@@ -83,6 +83,12 @@ const createBooking = async (bookingData) => {
         baseFare: bookingData.baseFare || 0,
         perKmRate: bookingData.perKmRate || 0,
         hourlyRate: bookingData.hourlyRate || 0,
+        perDayRate: bookingData.perDayRate || 0,
+        extraKmRate: bookingData.extraKmRate || 0,
+        extraHrRate: bookingData.extraHrRate || 0,
+        rentalHours: bookingData.rentalHours || 0,
+        rentalKm: bookingData.rentalKm || 0,
+        numberOfDays: bookingData.numberOfDays || 0,
         estimatedHours: bookingData.estimatedHours || 0,
         nightAllowance: bookingData.nightAllowance || 0,
         hillsAllowance: bookingData.hillsAllowance || 0,
@@ -96,6 +102,7 @@ const createBooking = async (bookingData) => {
         packageAmount: bookingData.packageAmount || 0,
         estimatedFare: bookingData.estimatedFare || 0,
         totalAmount: bookingData.totalAmount || bookingData.estimatedFare || 0,
+        minKmPerDay: bookingData.minKmPerDay || 0,
         
         // Status tracking: draft → pending → driver_accepted → vendor_approved → in_progress → completed / cancelled
         status: bookingData.status || 'draft',
@@ -162,16 +169,19 @@ const getNearbyBookings = async (city, vehicleType, status = 'pending', driverAv
     let bookings = result.Items || [];
 
     // Apply filters in memory (more flexible for complex logic)
-    if (city && city !== 'All') {
-        bookings = bookings.filter(b => 
-            (b.pickupCity && b.pickupCity.toLowerCase() === city.toLowerCase()) ||
-            (b.pickupAddress && b.pickupAddress.toLowerCase().includes(city.toLowerCase()))
-        );
+    if (city && city.toLowerCase() !== 'all' && city !== '') {
+        const lowerCity = city.toLowerCase();
+        bookings = bookings.filter(b => {
+            const bCity = (b.pickupCity || '').toLowerCase();
+            const bAddr = (b.pickupAddress || '').toLowerCase();
+            return bCity === lowerCity || bAddr.includes(lowerCity);
+        });
     }
 
-    if (vehicleType && vehicleType !== 'All') {
+    if (vehicleType && vehicleType.toLowerCase() !== 'all' && vehicleType !== '') {
+        const lowerVehicle = vehicleType.toLowerCase();
         bookings = bookings.filter(b => 
-            b.vehicleType && b.vehicleType.toLowerCase() === vehicleType.toLowerCase()
+            (b.vehicleType || '').toLowerCase() === lowerVehicle
         );
     }
 
@@ -366,6 +376,7 @@ const getBookingById = async (bookingId) => {
     return booking;
 };
 const acceptBooking = async (bookingId, driverId) => {
+    console.log(`[MODEL] AcceptBooking: BookingID='${bookingId}', DriverID='${driverId}', Type='${typeof driverId}'`);
     // 1. Fetch driver details first
     const driver = await driverModel.findDriverById(driverId);
     
@@ -373,31 +384,60 @@ const acceptBooking = async (bookingId, driverId) => {
         throw new Error('Driver not found');
     }
 
-    // 2. Prepare driver info to denormalize into booking
-    // Use selfie as profile pic if available
-    // Use profilePic (primary) or documents.selfie (legacy fallback)
+    // 2. Determine which vehicle is being used
+    let vehicleNum = driver.activeVehicleNumber || driver.vehicleNumber || null;
+    let vehicleBrand = driver.vehicleBrand || null;
+    let vehicleModel = driver.vehicleModel || null;
+    let rcNumber = driver.rcNumber || driver.vehicleNumber || null;
+
+    // If driver has an activeVehicleNumber, try to find details in the vehicles array
+    if (driver.activeVehicleNumber && driver.vehicles && Array.isArray(driver.vehicles)) {
+        const activeVehicle = driver.vehicles.find(v => 
+            (v.registration_number || v.vehicleNumber || v.rcNumber) === driver.activeVehicleNumber
+        );
+        if (activeVehicle) {
+            vehicleNum = driver.activeVehicleNumber;
+            vehicleBrand = activeVehicle.vehicleBrand || vehicleBrand;
+            vehicleModel = activeVehicle.vehicleModel || vehicleModel;
+            rcNumber = activeVehicle.rcNumber || activeVehicle.vehicleNumber || rcNumber;
+        }
+    }
+
+    // 3. Prepare driver info to denormalize into booking
     const driverProfilePic = driver.profilePic || (driver.documents && driver.documents.selfie) || null; 
 
-    await docClient.send(new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, assignedDriverId = :driverId, driverName = :dName, driverPhone = :dPhone, vehicleNumber = :vNum, vehicleType = :vType, driverProfilePic = :dPic, updatedAt = :now',
-        ConditionExpression: '#status = :pending',
-        ExpressionAttributeNames: {
-            '#status': 'status'
-        },
-        ExpressionAttributeValues: {
-            ':status': 'driver_accepted',
-            ':pending': 'pending',
-            ':driverId': driverId,
-            ':dName': driver.name,
-            ':dPhone': driver.phone,
-            ':vNum': driver.vehicleNumber || 'Not Set',
-            ':vType': driver.vehicleType || 'Unknown',
-            ':dPic': driverProfilePic,
-            ':now': new Date().toISOString()
+    try {
+        await docClient.send(new UpdateCommand({
+            TableName: TABLE_NAME,
+            Key: { id: bookingId },
+            UpdateExpression: 'SET #status = :status, assignedDriverId = :driverId, driverName = :dName, driverPhone = :dPhone, vehicleNumber = :vNum, vehicleBrand = :vBrand, vehicleModel = :vModel, rcNumber = :rcNum, driverProfilePic = :dPic, updatedAt = :now',
+            ConditionExpression: '#status = :pending',
+            ExpressionAttributeNames: {
+                '#status': 'status'
+            },
+            ExpressionAttributeValues: {
+                ':status': 'driver_accepted',
+                ':pending': 'pending',
+                ':driverId': driverId,
+                ':dName': driver.name,
+                ':dPhone': driver.phone,
+                ':vNum': vehicleNum,
+                ':vBrand': vehicleBrand,
+                ':vModel': vehicleModel,
+                ':rcNum': rcNumber,
+                ':dPic': driverProfilePic,
+                ':now': new Date().toISOString()
+            }
+        }));
+    } catch (error) {
+        if (error.name === 'ConditionalCheckFailedException') {
+            const recheck = await getBookingById(bookingId);
+            console.error(`[MODEL] ACCEPT FAILED for ${bookingId}. Expected 'pending', but current status is '${recheck ? recheck.status : 'DELETED'}'`);
+            throw new Error(`Booking is no longer available (Status: ${recheck ? recheck.status : 'Deleted'})`);
         }
-    }));
+        throw error;
+    }
+
     
     return await getBookingById(bookingId);
 };
@@ -456,13 +496,13 @@ const rejectDriver = async (bookingId, reason) => {
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, rejectionReason = :reason, assignedDriverId = :null, driverVideoUrl = :null, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, rejectionReason = :reason, assignedDriverId = :null, driverName = :null, driverPhone = :null, vehicleNumber = :null, driverProfilePic = :null, driverVideoUrl = :null, updatedAt = :now',
         ConditionExpression: '#status = :accepted',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
-            ':status': 'pending',
+            ':status': 'pending', // Republish immediately
             ':accepted': 'driver_accepted',
             ':reason': reason,
             ':null': null,
@@ -563,30 +603,68 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     const days = Math.max(1, Math.ceil(diffHours / 24));
     
     // Calculate total amount
-    // Formula: baseFare + (actualDistanceKm * perKmRate) + (driverAllowance * days) + (nightAllowance * days) + hillsAllowance + waitingCharges + extraCharges
-    let totalAmount = (booking.baseFare || 0);
+    // Logic:
+    // 1. For distance-based trips (oneWay, roundTrip, localDriverAllowance), recalculate from distance + allowances.
+    // 2. For Duration-based trips (localHourly/Rental), recalculate from days * perDayRate + allowances.
+    // 3. For fixed/package trips, use original estimatedFare (agreed total) as base and only add on-trip extras.
     
-    // 1. Distance Charge
-    totalAmount += (actualDistanceKm * (booking.perKmRate || 0));
+    const isDistanceBased = ['oneWay', 'roundTrip', 'localDriverAllowance'].includes(booking.tripType);
+    const isDurationBased = booking.tripType === 'localHourly';
+    let totalAmount = 0;
+
+    if (isDistanceBased) {
+        // Standard formula for flexible distance trips
+        totalAmount = (Number(booking.baseFare) || 0);
+        
+        // 1. Distance Charge (considering minKmPerDay if multi-day)
+        const minKmTotal = (Number(booking.minKmPerDay) || 0) * days;
+        const distToCharge = Math.max(actualDistanceKm, minKmTotal);
+        
+        totalAmount += (distToCharge * (Number(booking.perKmRate) || 0));
+        
+        // 2. Allowances (Driver Bata & Night are per-day)
+        totalAmount += ((Number(booking.driverAllowance) || 0) * days);
+        totalAmount += ((Number(booking.nightAllowance) || 0) * days);
+        
+        // 3. Hills Allowance (Flat)
+        totalAmount += (Number(booking.hillsAllowance) || 0);
+    } else if (isDurationBased) {
+        // Rental Formula: Days * PerDayRate + Allowances
+        const ratePerDay = Number(booking.perDayRate) || Number(booking.hourlyRate) || 0;
+        totalAmount = (days * ratePerDay);
+        
+        totalAmount += ((Number(booking.driverAllowance) || 0) * days);
+        totalAmount += ((Number(booking.nightAllowance) || 0) * days);
+        totalAmount += (Number(booking.hillsAllowance) || 0);
+        
+        // No distance charge for rentals usually, or maybe extraKmRate (not yet fully implemented in auto-calc here)
+    } else {
+        // Fixed formula for Packages etc. 
+        totalAmount = (Number(booking.estimatedFare) || Number(booking.fare) || 0);
+    }
     
-    // 2. Allowances (Driver Bata & Night are per-day)
-    totalAmount += ((booking.driverAllowance || 0) * days);
-    totalAmount += ((booking.nightAllowance || 0) * days);
-    
-    // 3. Hills Allowance (Flat)
-    totalAmount += (booking.hillsAllowance || 0);
-    
-    // 4. Waiting Charges (Accumulated during trip)
+    // 4. Waiting Charges
     if (booking.waitingTimeMins > 0) {
-        const ratePerMin = booking.waitingCharges || 0; 
+        const ratePerMin = Number(booking.waitingCharges) || 0; 
         totalAmount += (ratePerMin * booking.waitingTimeMins);
     }
 
-    // 5. Extra Charges (Toll, Parking, etc.) passed at completion
+    // 5. Extra Charges (Toll, Parking, etc.)
     const extras = Number(extraCharges) || 0;
     totalAmount += extras;
     
     totalAmount = Math.max(0, Math.round(totalAmount));
+
+    // Recalculate Vendor Commission proportionally ONLY if total Amount changed for variable trips
+    // For fixed trips, the vendorCommission should remain exactly what the vendor specified
+    let vendorCommission = Number(booking.vendorCommission) || 0;
+    
+    if (isDistanceBased || isDurationBased) {
+        const originalEstimated = Number(booking.estimatedFare) || totalAmount || 1; 
+        const originalCommission = Number(booking.vendorCommission) || 0;
+        const commissionRate = originalCommission / originalEstimated;
+        vendorCommission = Math.round(totalAmount * commissionRate);
+    }
     
     // Prepare update parameters
     const isCashPayment = paymentMethod === 'cash';
@@ -601,7 +679,7 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :driverStatus, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, vendorCommission = :comm, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :driverStatus, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
@@ -611,6 +689,7 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
             ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
+            ':comm': vendorCommission,
             ':extras': extras,
             ':method': paymentMethod,
             ':paymentStatus': isCashPayment ? 'pending' : 'completed', 
@@ -741,7 +820,7 @@ const hasActiveBooking = async (driverId) => {
     // Fallback to Scan
     const scanParams = {
         TableName: TABLE_NAME,
-        FilterExpression: 'assignedDriverId = :driverId AND #status IN (:accepted, :approved, :in_progress, :payment_pending)',
+        FilterExpression: 'assignedDriverId = :driverId AND #status IN (:accepted, :approved, :in_progress)',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
@@ -749,8 +828,7 @@ const hasActiveBooking = async (driverId) => {
             ':driverId': driverId,
             ':accepted': 'driver_accepted',
             ':approved': 'vendor_approved',
-            ':in_progress': 'in_progress',
-            ':payment_pending': 'payment_verification_pending'
+            ':in_progress': 'in_progress'
         }
     };
 

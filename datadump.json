@@ -1,0 +1,144 @@
+
+--- Table: uturn-bookings ---
+Count: 1
+Recent Items:
+[
+  {
+    "baseFare": 200,
+    "pickupLocation": {
+      "lng": 77.7171642,
+      "lat": 11.3410364
+    },
+    "loadType": null,
+    "status": "driver_accepted",
+    "vendorCommission": 10,
+    "otp": null,
+    "driverPhone": "1234567890",
+    "waitingCharges": 0,
+    "dropCity": "Coimbatore, Tamil Nadu, India",
+    "estimatedHours": 68,
+    "pickupCity": "Erode",
+    "driverAllowance": 40,
+    "nightAllowance": 0,
+    "paymentStatus": "pending",
+    "distanceKm": 100.654,
+    "customerName": "cusytomerrr",
+    "actualDistanceKm": null,
+    "totalAmount": 1710,
+    "waitingTimeMins": 0,
+    "scheduleDate": "2026-02-24",
+    "waitingChargesPerMin": 0,
+    "createdAt": "2026-02-24T04:25:09.341Z",
+    "estimatedDurationMins": 0,
+    "startOdometer": null,
+    "vehicleType": "Sedan",
+    "tollCharges": 0,
+    "rejectionReason": null,
+    "returnDate": "2026-02-27",
+    "startTime": null,
+    "endTime": null,
+    "extraCharges": 3,
+    "customerLanguage": "Hindi",
+    "category": "Passenger",
+    "paymentMethod": null,
+    "pickupAddress": "Erode, Tamil Nadu, India",
+    "packageAmount": 1710,
+    "hourlyRate": 20,
+    "returnTime": "05:54",
+    "perKmRate": 0,
+    "estimatedFare": 1710,
+    "additionalStops": [],
+    "vendorId": "5e20f3ff-95d0-4647-882b-7502206aeae9",
+    "waitingChargesPerHour": 0,
+    "scheduleTime": "09:54",
+    "assignedDriverId": "9d809694-10bd-4769-a5f8-878866fd9e8a",
+    "endOdometer": null,
+    "tripType": "localHourly",
+    "driverProfilePic": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/profile/b8259279-24b8-411b-80d9-46e6516ff268-profile.jpg",
+    "driverName": "vijay",
+    "id": "9474f557-4a0c-43f7-b3bf-c0e8684d3ab3",
+    "numberOfPeople": 1,
+    "vehicleNumber": "Not Set",
+    "dropAddress": "Coimbatore, Tamil Nadu, India",
+    "trackingId": "TRIP-CSC4",
+    "hillsAllowance": 30,
+    "customerPhone": "1234567890",
+    "driverVideoUrl": null,
+    "minKmPerDay": null,
+    "dropLocation": {
+      "lng": 76.9588876,
+      "lat": 10.9973691
+    },
+    "paymentMode": "customer_pays_driver",
+    "updatedAt": "2026-02-24T04:31:33.715Z"
+  }
+]
+
+--- Table: UTurnBookings ---
+Count: 0
+
+--- DRIVERS ---
+Count: 1
+Vijay Profile:
+{
+  "isOnline": true,
+  "status": "active",
+  "profilePic": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/profile/b8259279-24b8-411b-80d9-46e6516ff268-profile.jpg",
+  "name": "vijay",
+  "preferredVehicles": [],
+  "availability": [
+    "rental",
+    "local",
+    "oneWay",
+    "roundTrip"
+  ],
+  "state": "Rajasthan",
+  "documents": {
+    "licenceFront": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/documents/fce3e200-6814-4285-81c1-ecc751d37599-licenceFront.jpg",
+    "aadharFront": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/documents/f20fe490-5f5e-4b76-ae69-65943807e72f-aadharFront.jpg",
+    "licenceBack": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/documents/5deae8b5-c520-40e0-8c34-c003d2d4d2de-licenceBack.jpg",
+    "aadharBack": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/documents/d43cb500-9c66-4837-9ae6-10a76ca9b201-aadharBack.jpg"
+  },
+  "vehicleBrand": null,
+  "tripType": null,
+  "driverType": "driver",
+  "dob": "23/1/2007",
+  "walletBalance": 0,
+  "vehicleModel": null,
+  "vehicles": [
+    {
+      "tripType": "Passenger",
+      "fuelType": "Petrol",
+      "documents": {
+        "insurance": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/vehicles/0/0298ff1a-5b95-4a1b-97d3-508eb3f9626f-insurance.jpg",
+        "permit": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/vehicles/0/8c68910f-05a5-47a3-9d44-e7d3b554f19a-permit.jpg",
+        "rcBack": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/vehicles/0/b0f60ff2-4d78-472d-a339-97e8a7a5e4ac-rcBack.jpg",
+        "vehicleImage": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/vehicles/0/5cde20e3-f384-4398-b54e-f91cbc81ca81-vehicle.jpg",
+        "rcFront": "https://uturn-documents.s3.amazonaws.com/drivers/9d809694-10bd-4769-a5f8-878866fd9e8a/vehicles/0/7bf7e464-86cd-42b1-87fe-8521b85a5d01-rcFront.jpg"
+      },
+      "rcNumber": "1234568765453",
+      "permitExpiry": "02/32",
+      "vehicleNumber": "1234568765453",
+      "vehicleModel": "2022 / asdfg",
+      "vehicleType": "Sedan",
+      "fcExpiry": "02/27",
+      "insuranceExpiry": "03/25"
+    }
+  ],
+  "id": "9d809694-10bd-4769-a5f8-878866fd9e8a",
+  "phone": "1234567890",
+  "vehicleNumber": null,
+  "licenceNumber": "123456789065",
+  "rating": 5,
+  "createdAt": "2026-02-24T02:56:19.737Z",
+  "referralCode": "UTN789075B0AE",
+  "vehicleType": null,
+  "isVerified": false,
+  "aadharNumber": "123456789033",
+  "homeLocation": null,
+  "languages": [
+    "Tamil"
+  ],
+  "totalTrips": 0,
+  "updatedAt": "2026-02-24T04:25:52.007Z"
+}

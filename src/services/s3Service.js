@@ -27,7 +27,7 @@ const saveFileLocally = (folder, fileName, buffer) => {
     // Use localhost or machine IP for development
     // For Android Emulator use 10.0.2.2, for real device use LAN IP
     // Here we default to localhost:3000 for simplicity in web testing
-    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+    const baseUrl = process.env.BASE_URL || 'https://uturnharitry1backned.vercel.app';
     return {
         key: `${folder}/${uniqueName}`,
         publicUrl: `${baseUrl}/uploads/${uniqueName}`
@@ -70,7 +70,7 @@ const getDownloadUrl = async (key) => {
         return downloadUrl;
     } catch (error) {
         // Fallback for local files
-        const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+        const baseUrl = process.env.BASE_URL || 'https://uturnharitry1backned.vercel.app';
         return `${baseUrl}/uploads/${path.basename(key)}`;
     }
 };

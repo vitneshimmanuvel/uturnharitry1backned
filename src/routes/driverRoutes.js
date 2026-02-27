@@ -8,10 +8,10 @@ const {
     createDriver, 
     findDriverByPhone, 
     findDriverById, 
-    updateDriver, 
-    updateDriverDocuments,
-    setDriverOnlineStatus,
-    getOnlineDrivers
+    getOnlineDrivers,
+    findOnlineDriverUsingVehicle,
+    normalizeVehicleNumber,
+    updateDriver
 } = require('../models/driverModel');
 const { generateToken, authMiddleware, driverOnly } = require('../middleware/auth');
 const driverModel = require('../models/driverModel');
@@ -230,13 +230,22 @@ router.post('/register', async (req, res) => {
             });
         }
 
+        // Normalize vehicle data
+        const normalizedVehicleNumber = normalizeVehicleNumber(vehicleNumber);
+        
+        const normalizedVehicles = (vehicles || []).map(v => ({
+            ...v,
+            vehicleNumber: normalizeVehicleNumber(v.vehicleNumber),
+            rcNumber: normalizeVehicleNumber(v.rcNumber || v.vehicleNumber)
+        }));
+
         // Create driver with simplified data
         const driver = await createDriver({
             name,
             phone,
             driverType: driverType || 'driver',
-            licenceNumber,
-            vehicleNumber,
+            licenceNumber: licenceNumber ? licenceNumber.toUpperCase().trim() : null,
+            vehicleNumber: normalizedVehicleNumber,
             vehicleType,
             vehicleBrand,
             vehicleModel,
@@ -244,10 +253,11 @@ router.post('/register', async (req, res) => {
             aadharNumber: aadharNumber || null,
             dob: dob || null,
             tripType: tripType || null,
-            vehicles: vehicles || [], // Array of additional vehicles
+            vehicles: normalizedVehicles,
             state: req.body.state,
             languages: req.body.languages,
-            referredBy: req.body.referredBy // Pass referral code
+            referredBy: req.body.referredBy,
+            rcNumber: normalizedVehicleNumber // Ensure rcNumber is also normalized
         });
 
         // Generate token
@@ -370,9 +380,31 @@ router.put('/documents', authMiddleware, driverOnly, async (req, res) => {
 // Toggle online status with availability
 router.put('/online-status', authMiddleware, driverOnly, async (req, res) => {
     try {
-        const { isOnline, availability, availabilities } = req.body;
+        const { isOnline, availability, availabilities, activeVehicleNumber } = req.body;
         const finalAvailability = availabilities || availability || [];
-        const updatedDriver = await setDriverOnlineStatus(req.user.id, isOnline, finalAvailability);
+        
+        // Locking Logic: If going online, check if someone else is online with this vehicle
+        let normalizedActiveVehicle = null;
+        if (isOnline && activeVehicleNumber) {
+            normalizedActiveVehicle = normalizeVehicleNumber(activeVehicleNumber);
+            const otherDriver = await findOnlineDriverUsingVehicle(normalizedActiveVehicle);
+            
+            if (otherDriver && otherDriver.id !== req.user.id) {
+                return res.status(409).json({
+                    success: false,
+                    message: `Vehicle ${normalizedActiveVehicle} is currently in use by another driver.`,
+                    inUseBy: otherDriver.name
+                });
+            }
+        }
+
+        const updates = { isOnline, availability: finalAvailability };
+        if (normalizedActiveVehicle) {
+            updates.activeVehicleNumber = normalizedActiveVehicle;
+        }
+
+        const updatedDriver = await updateDriver(req.user.id, updates);
+        
         res.json({ 
             success: true, 
             message: `You are now ${isOnline ? 'online' : 'offline'}`,
@@ -380,6 +412,64 @@ router.put('/online-status', authMiddleware, driverOnly, async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Failed to update status', error: error.message });
+    }
+});
+
+// Set active/default vehicle
+router.put('/active-vehicle', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { vehicleNumber } = req.body;
+        if (!vehicleNumber) {
+            return res.status(400).json({ success: false, message: 'Vehicle number is required' });
+        }
+
+        const normalizedVNum = normalizeVehicleNumber(vehicleNumber);
+        const otherDriver = await findOnlineDriverUsingVehicle(normalizedVNum);
+
+        if (otherDriver && otherDriver.id !== req.user.id) {
+            return res.status(409).json({
+                success: false,
+                message: `Vehicle ${normalizedVNum} is currently in use by ${otherDriver.name}.`,
+                inUseBy: otherDriver.name
+            });
+        }
+
+        const updatedDriver = await updateDriver(req.user.id, { activeVehicleNumber: normalizedVNum });
+        res.json({ success: true, message: 'Default vehicle updated', data: updatedDriver });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to update active vehicle', error: error.message });
+    }
+});
+
+// Check availability for a list of vehicles
+router.post('/vehicles/availability', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { vehicleNumbers } = req.body;
+        if (!vehicleNumbers || !Array.isArray(vehicleNumbers)) {
+            return res.status(400).json({ success: false, message: 'vehicleNumbers array is required' });
+        }
+
+        const { getOnlineDrivers } = require('../models/driverModel');
+        const onlineDrivers = await getOnlineDrivers();
+        
+        // Map vehicle number to status
+        const availability = {};
+        vehicleNumbers.forEach(vnum => {
+            const normalized = normalizeVehicleNumber(vnum);
+            const usingDriver = onlineDrivers.find(d => {
+                const active = normalizeVehicleNumber(d.activeVehicleNumber);
+                const primary = normalizeVehicleNumber(d.vehicleNumber);
+                return (active === normalized || (!active && primary === normalized)) && d.id !== req.user.id;
+            });
+            availability[vnum] = {
+                isInUse: !!usingDriver,
+                inUseBy: usingDriver ? usingDriver.name : null
+            };
+        });
+
+        res.json({ success: true, data: availability });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to check availability', error: error.message });
     }
 });
 
@@ -479,8 +569,8 @@ router.get('/rides/available', authMiddleware, driverOnly, async (req, res) => {
         }
 
         // Allow query parameters to override driver defaults
-        const city = req.query.city || driver.homeLocation || 'Chennai'; 
-        const vehicleType = req.query.vehicleType || driver.vehicleType || 'Sedan';
+        const city = req.query.city || driver.homeLocation || 'all'; 
+        const vehicleType = req.query.vehicleType || driver.vehicleType || 'all';
 
         const rides = await getNearbyBookings(city, vehicleType);
         

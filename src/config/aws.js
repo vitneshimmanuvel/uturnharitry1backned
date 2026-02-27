@@ -36,6 +36,7 @@ const s3Client = new S3Client(awsConfig);
 const TABLES = {
   VENDORS: "uturn-vendors",
   DRIVERS: "uturn-drivers",
+  BOOKINGS: "uturn-bookings",
   vendors: "uturn-vendors",
   drivers: "uturn-drivers",
   bookings: "uturn-bookings",
@@ -43,6 +44,7 @@ const TABLES = {
   loans: "uturn-loans",
   SOLO_RIDES: "uturn-solo-rides",
   MARKETPLACE_REQUESTS: "uturn-marketplace-requests",
+  NOTIFICATIONS: "uturn-notifications",
 };
 
 // Alias for TABLE_NAMES

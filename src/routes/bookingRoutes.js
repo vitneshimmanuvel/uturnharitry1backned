@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const bookingModel = require('../models/bookingModel');
 const driverModel = require('../models/driverModel');
 const soloRideModel = require('../models/soloRideModel');
+const notificationModel = require('../models/notificationModel');
 const videoService = require('../services/videoService');
 const whatsappService = require('../services/whatsappService');
 const s3Service = require('../services/s3Service');
@@ -15,9 +16,12 @@ const fs = require('fs'); // Added for debug logging
 
 // Generate unique tracking ID
 const generateTrackingId = () => {
-    const prefix = 'UTN';
-    const random = crypto.randomBytes(3).toString('hex').toUpperCase();
-    return `${prefix}-${random}`;
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I, O, 0, 1
+    let result = 'TRIP-';
+    for (let i = 0; i < 4; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
 };
 
 // Multer configuration for VIDEO upload
@@ -238,26 +242,53 @@ router.post('/:id/accept', async (req, res) => {
             });
         }
 
-        // Overlap Check
+        // Overlap Check (Safe Date Parsing)
         const bookingToAccept = await bookingModel.getBookingById(req.params.id);
         if (bookingToAccept) {
-            const startStr = `${bookingToAccept.scheduleDate}T${bookingToAccept.scheduleTime}`;
-            const endStr = (bookingToAccept.returnDate && bookingToAccept.returnTime)
-                ? `${bookingToAccept.returnDate}T${bookingToAccept.returnTime}`
-                : new Date(new Date(startStr).getTime() + 4 * 60 * 60 * 1000).toISOString();
-            
-            const availability = await checkOverlap(driverId, startStr, endStr);
-            if (availability.overlap) {
-                return res.status(409).json({
-                    success: false,
-                    message: 'Slot taken: You already have a booking during this time slot.',
-                    conflict: availability.conflict
-                });
+            try {
+                const startStr = `${bookingToAccept.scheduleDate}T${bookingToAccept.scheduleTime}`;
+                const startTimeMs = new Date(startStr).getTime();
+                
+                // Only perform overlap check if start time is valid
+                if (!isNaN(startTimeMs)) {
+                    const endStr = (bookingToAccept.returnDate && bookingToAccept.returnTime)
+                        ? `${bookingToAccept.returnDate}T${bookingToAccept.returnTime}`
+                        : new Date(startTimeMs + 4 * 60 * 60 * 1000).toISOString();
+                    
+                    const availability = await checkOverlap(driverId, startStr, endStr);
+                    if (availability.overlap) {
+                        return res.status(409).json({
+                            success: false,
+                            message: 'Slot taken: You already have a booking during this time slot.',
+                            conflict: availability.conflict
+                        });
+                    }
+                } else {
+                    console.warn(`[AcceptBooking] Invalid start time for booking ${req.params.id}: ${startStr}`);
+                }
+            } catch (dateError) {
+                console.warn(`[AcceptBooking] Date parsing error for overlap check: ${dateError.message}`);
+                // Proceed with acceptance if overlap check fails due to bad data
             }
         }
+
         
         const booking = await bookingModel.acceptBooking(req.params.id, driverId);
         
+        // Notify vendor that driver accepted and video is available
+        try {
+            const notificationModel = require('../models/notificationModel');
+            await notificationModel.createNotification(
+                booking.vendorId,
+                'DRIVER_ACCEPTED',
+                'New Driver Acceptance',
+                `Driver ${booking.driverName} has accepted Trip #${req.params.id.substring(0, 8)} and attached a verification video.`,
+                { bookingId: req.params.id }
+            );
+        } catch (notifError) {
+            console.error('Failed to notify vendor of acceptance:', notifError);
+        }
+
         res.json({
             success: true,
             message: 'Booking accepted. Please upload verification video.',
@@ -265,11 +296,19 @@ router.post('/:id/accept', async (req, res) => {
         });
     } catch (error) {
         console.error('Accept booking error:', error);
-        res.status(500).json({
+        
+        // Return 400 for logic/condition errors so client gets the real message
+        // instead of a generic 500 "Server Error"
+        const isClientError = error.message.includes('no longer available') || 
+                             error.message.includes('not found') ||
+                             error.message.includes('already taken');
+                             
+        res.status(isClientError ? 400 : 500).json({
             success: false,
             message: error.message
         });
     }
+
 });
 
 /**
@@ -302,20 +341,23 @@ router.post('/:id/driver-video', videoUpload.single('video'), async (req, res) =
         // Update booking
         const booking = await bookingModel.updateDriverVideo(id, videoUrl);
         
-        // TODO: Notify vendor of new video to review
-        
         res.json({
             success: true,
-            message: 'Video uploaded successfully. Waiting for vendor approval.',
+            message: 'Video uploaded successfully.',
             data: { videoUrl, booking }
         });
     } catch (error) {
         console.error('Upload video error:', error);
-        res.status(500).json({
+        
+        const isClientError = error.message.includes('not found') || 
+                             error.message.includes('no longer available');
+                             
+        res.status(isClientError ? 400 : 500).json({
             success: false,
             message: error.message
         });
     }
+
 });
 
 /**
@@ -392,11 +434,25 @@ router.post('/:id/reject-driver', authMiddleware, vendorOnly, async (req, res) =
         
         const booking = await bookingModel.rejectDriver(req.params.id, reason);
         
-        // TODO: Notify driver of rejection with reason
+        // Notify driver of rejection with reason
+        if (bookingToCheck.assignedDriverId) {
+            try {
+                await notificationModel.createNotification(
+                    bookingToCheck.assignedDriverId,
+                    'REJECTION',
+                    'Trip Application Rejected',
+                    `Your application for Trip #${bookingToCheck.id.substring(0,8)} was rejected. Reason: ${reason}`,
+                    { bookingId: bookingToCheck.id }
+                );
+                console.log(`[NOTIFICATION] Rejection notice sent to driver ${bookingToCheck.assignedDriverId}`);
+            } catch (notifError) {
+                console.error('Failed to send rejection notification:', notifError);
+            }
+        }
         
         res.json({
             success: true,
-            message: 'Driver rejected. Booking available for other drivers.',
+            message: 'Driver rejected. Trip republished for other drivers.',
             data: booking
         });
     } catch (error) {
@@ -780,7 +836,7 @@ router.post('/:id/reject-driver', async (req, res) => {
         const booking = await bookingModel.rejectDriver(req.params.id, reason);
         res.json({
             success: true,
-            message: 'Driver rejected',
+            message: 'Driver rejected. Trip moved to Drafts.',
             data: booking
         });
     } catch (error) {

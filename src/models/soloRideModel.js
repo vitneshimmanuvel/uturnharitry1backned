@@ -98,6 +98,7 @@ const createSoloRide = async (rideData, driver) => {
         rentalHours: rideData.rentalHours || 0,
         rentalKm: rideData.rentalKm || 0,
         extraKmRate: rideData.extraKmRate || 0,
+        perDayRate: rideData.perDayRate || 0,
         totalAmount: rideData.totalAmount || 0,
 
         // Status: confirmed → in_progress → completed / cancelled
@@ -243,19 +244,46 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
     const diffMs = endTime - startTime;
     const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
-    // Calculate fare (simplified mirror of bookingModel)
-    let totalAmount = (Number(ride.baseFare) || 0);
-    totalAmount += (actualDistanceKm * (Number(ride.perKmRate) || 0));
-    totalAmount += ((Number(ride.driverAllowance) || 0) * days);
-    totalAmount += ((Number(ride.nightAllowance) || 0) * days);
-    totalAmount += (Number(ride.hillsAllowance) || 0);
+    // Calculate fare
+    const isDistanceBased = ['oneWay', 'roundTrip', 'localDriverAllowance'].includes(ride.tripType);
+    const isDurationBased = ride.tripType === 'localHourly';
+    let totalAmount = 0;
+
+    if (isDistanceBased) {
+        const minKmTotal = (Number(ride.minKmPerDay) || 0) * days;
+        const distToCharge = Math.max(actualDistanceKm, minKmTotal);
+        
+        totalAmount = (Number(ride.baseFare) || 0);
+        totalAmount += (distToCharge * (Number(ride.perKmRate) || 0));
+        totalAmount += ((Number(ride.driverAllowance) || 0) * days);
+        totalAmount += ((Number(ride.nightAllowance) || 0) * days);
+        totalAmount += (Number(ride.hillsAllowance) || 0);
+    } else if (isDurationBased) {
+        const ratePerDay = Number(ride.perDayRate) || Number(ride.hourlyRate) || 0;
+        totalAmount = (days * ratePerDay);
+        totalAmount += ((Number(ride.driverAllowance) || 0) * days);
+        totalAmount += ((Number(ride.nightAllowance) || 0) * days);
+        totalAmount += (Number(ride.hillsAllowance) || 0);
+    } else {
+        // Use original estimated total for fixed/package solo rides
+        totalAmount = (Number(ride.totalAmount) || Number(ride.baseFare) || 0);
+    }
     
     if (ride.waitingTimeMins > 0) {
         totalAmount += (ride.waitingTimeMins * (Number(ride.waitingChargesPerMin) || 0));
     }
     
     totalAmount += (Number(extraCharges) || 0);
-    totalAmount = Math.round(totalAmount);
+    totalAmount = Math.max(0, Math.round(totalAmount));
+
+    // Recalculate Vendor Commission proportionally
+    let vendorCommission = Number(ride.vendorCommission) || 0;
+    if (isDistanceBased || isDurationBased) {
+        const originalEstimated = Number(ride.totalAmount) || totalAmount || 1;
+        const originalCommission = Number(ride.vendorCommission) || 0;
+        const commissionRate = originalCommission / originalEstimated;
+        vendorCommission = Math.round(totalAmount * commissionRate);
+    }
 
     const isCash = paymentMethod === 'cash';
     // For Solo rides, we usually assume customer pays driver directly unless specified
@@ -264,7 +292,7 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: rideId },
-        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, vendorCommission = :comm, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
@@ -274,6 +302,7 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
             ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
+            ':comm': vendorCommission,
             ':extras': Number(extraCharges) || 0,
             ':method': paymentMethod,
             ':paymentStatus': 'completed',

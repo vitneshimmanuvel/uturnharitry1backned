@@ -735,7 +735,7 @@ router.get('/stats/dashboard', authMiddleware, vendorOnly, async (req, res) => {
             completedTrips
         ] = await Promise.all([
             bookingModel.getVendorBookings(vendorId), // All
-            bookingModel.getVendorBookings(vendorId, 'in_progress'),
+            bookingModel.getVendorBookings(vendorId, 'pending,driver_accepted,vendor_approved,in_progress,pickup,drop,payment_pending,payment_verification_pending,commission_pending,commission_verification_pending'),
             bookingModel.getVendorBookings(vendorId, 'driver_accepted'), // Pending Approvals
             bookingModel.getVendorBookings(vendorId, 'completed')
         ]);

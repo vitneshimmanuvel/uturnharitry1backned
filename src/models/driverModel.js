@@ -14,6 +14,14 @@ const referralModel = require("./referralModel");
 const { v4: uuidv4 } = require("uuid");
 
 /**
+ * Normalize vehicle number (uppercase, remove spaces/dashes)
+ */
+const normalizeVehicleNumber = (vnum) => {
+  if (!vnum) return null;
+  return vnum.toString().toUpperCase().replace(/[^A-Z0-9]/g, "");
+};
+
+/**
  * Create a new driver - SIMPLIFIED (Name + Phone Only)
  * No password, no email required
  */
@@ -56,6 +64,7 @@ const createDriver = async (driverData) => {
     vehicleType: driverData.vehicleType || null,
     vehicleBrand: driverData.vehicleBrand || null,
     vehicleModel: driverData.vehicleModel || null,
+    rcNumber: driverData.rcNumber || driverData.vehicleNumber || null,
     homeLocation: driverData.homeLocation || null,
     aadharNumber: driverData.aadharNumber || null,
     dob: driverData.dob || null,
@@ -207,6 +216,31 @@ const findDriverById = async (id) => {
 };
 
 /**
+ * Find if any driver is currently online and using a specific vehicle
+ */
+const findOnlineDriverUsingVehicle = async (vehicleNumber) => {
+  if (!vehicleNumber) return null;
+  const normalized = normalizeVehicleNumber(vehicleNumber);
+  
+  // Note: Since existing DB data might NOT be normalized, we might need a more complex filter
+  // or a migration. For now, we'll search for the normalized version.
+  // Ideally, all writes should be normalized.
+  
+  const result = await docClient.send(
+    new ScanCommand({
+      TableName: TABLE_NAMES.drivers,
+      FilterExpression: "isOnline = :true AND (activeVehicleNumber = :vnum OR (attribute_not_exists(activeVehicleNumber) AND vehicleNumber = :vnum))",
+      ExpressionAttributeValues: { 
+        ":vnum": normalized,
+        ":true": true
+      },
+    }),
+  );
+
+  return result.Items && result.Items.length > 0 ? result.Items[0] : null;
+};
+
+/**
  * Update driver profile
  */
 const updateDriver = async (id, updates) => {
@@ -254,11 +288,9 @@ const setDriverOnlineStatus = async (id, isOnline, availability = []) => {
  * Get all online drivers
  */
 const getOnlineDrivers = async () => {
-  // Note: This is a scan operation - consider using a GSI for production
   const result = await docClient.send(
-    new QueryCommand({
+    new ScanCommand({
       TableName: TABLE_NAMES.drivers,
-      IndexName: "phone-index",
       FilterExpression: "isOnline = :isOnline",
       ExpressionAttributeValues: { ":isOnline": true },
     }),
@@ -319,4 +351,6 @@ module.exports = {
   findDriverByReferralCode, // Export new function
   incrementDriverTrips,
   addDriverEarnings,
+  findOnlineDriverUsingVehicle,
+  normalizeVehicleNumber,
 };

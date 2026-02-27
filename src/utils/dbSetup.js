@@ -106,7 +106,7 @@ const createDriversTable = async () => {
 // Create Bookings table
 const createBookingsTable = async () => {
     const params = {
-        TableName: 'UTurnBookings',
+        TableName: 'uturn-bookings',
         KeySchema: [
             { AttributeName: 'id', KeyType: 'HASH' }
         ],
@@ -161,7 +161,7 @@ const createBookingsTable = async () => {
 const setupTables = async () => {
     const vendorExists = await tableExists(TABLES.VENDORS);
     const driverExists = await tableExists(TABLES.DRIVERS);
-    const bookingsExists = await tableExists('UTurnBookings');
+    const bookingsExists = await tableExists('uturn-bookings');
 
     if (!vendorExists) {
         await createVendorsTable();

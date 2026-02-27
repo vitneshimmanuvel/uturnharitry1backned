@@ -1,19 +1,10 @@
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { PutObjectCommand } = require('@aws-sdk/client-s3');
 const { v4: uuidv4 } = require('uuid');
-
-// AWS S3 Configuration
-const s3Client = new S3Client({
-    region: process.env.AWS_REGION,
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-    }
-});
-
-const BUCKET_NAME = process.env.AWS_S3_BUCKET;
+const { s3Client, S3_BUCKET: BUCKET_NAME, awsConfig } = require('../config/aws');
+const s3Service = require('./s3Service');
 
 /**
- * Upload driver verification video to S3
+ * Upload driver verification video to S3 (with local fallback)
  * @param {Buffer} fileBuffer - Video file buffer
  * @param {string} filename - Original filename
  * @param {string} driverId - Driver ID
@@ -22,26 +13,23 @@ const BUCKET_NAME = process.env.AWS_S3_BUCKET;
  */
 const uploadDriverVideo = async (fileBuffer, filename, driverId, bookingId) => {
     try {
-        const fileExtension = filename.split('.').pop();
-        const key = `driver-videos/${bookingId}/${driverId}-${uuidv4()}.${fileExtension}`;
+        const fileExtension = filename.includes('.') ? filename.split('.').pop() : 'mp4';
+        const uniqueFileName = `${driverId}-${uuidv4()}.${fileExtension}`;
+        const folder = `driver-videos/${bookingId}`;
         
-        const command = new PutObjectCommand({
-            Bucket: BUCKET_NAME,
-            Key: key,
-            Body: fileBuffer,
-            ContentType: 'video/mp4' // Assuming MP4, adjust if needed
-        });
+        // Use s3Service which automatically handles S3 upload OR local disk fallback
+        const uploadResult = await s3Service.uploadFile(
+            folder,
+            uniqueFileName,
+            fileBuffer,
+            'video/mp4' // Assuming MP4
+        );
         
-        await s3Client.send(command);
-        
-        // Construct public URL
-        const videoUrl = `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-        
-        console.log(`Video uploaded successfully: ${videoUrl}`);
-        return videoUrl;
+        console.log(`Video uploaded successfully via S3Service: ${uploadResult.publicUrl}`);
+        return uploadResult.publicUrl;
     } catch (error) {
-        console.error('Video upload error:', error);
-        throw new Error('Failed to upload video');
+        console.error('Video upload wrapper error:', error);
+        throw new Error('Failed to upload video: ' + error.message);
     }
 };
 
