@@ -28,6 +28,9 @@ const normalizeVehicleNumber = (vnum) => {
 const createDriver = async (driverData) => {
   const driverId = uuidv4();
 
+  // Helper: returns value only if it's a non-empty string/value, otherwise undefined
+  const has = (val) => (val !== undefined && val !== null && (typeof val !== 'string' || val.trim() !== '')) ? val : undefined;
+
   // Generate Referral Code using centralized model
   const referralRecord = await referralModel.createReferral(
     driverId,
@@ -36,7 +39,7 @@ const createDriver = async (driverData) => {
   const referralCode = referralRecord.code;
 
   // Handle being referred by someone else
-  if (driverData.referredBy) {
+  if (has(driverData.referredBy)) {
     try {
       await referralModel.applyReferralCode(
         driverData.referredBy,
@@ -49,46 +52,13 @@ const createDriver = async (driverData) => {
     }
   }
 
+  // Required / always-present fields
   const driver = {
     id: driverId,
-    // Essential fields only
     name: driverData.name,
     phone: driverData.phone,
-
-    // Driver type: 'driver' (has vehicle) or 'acting_driver' (no vehicle)
-    driverType: driverData.driverType || "driver",
-
-    // Optional fields - can be added later
-    licenceNumber: driverData.licenceNumber || null,
-    vehicleNumber: driverData.vehicleNumber || null,
-    vehicleType: driverData.vehicleType || null,
-    vehicleBrand: driverData.vehicleBrand || null,
-    vehicleModel: driverData.vehicleModel || null,
-    rcNumber: driverData.rcNumber || driverData.vehicleNumber || null,
-    homeLocation: driverData.homeLocation || null,
-    aadharNumber: driverData.aadharNumber || null,
-    dob: driverData.dob || null,
-    tripType: driverData.tripType || null,
-    vehicles: driverData.vehicles || [],
-
-    // Profile picture URL
-    profilePic: driverData.profilePic || null,
-
-    // For acting drivers
-    preferredVehicles: driverData.preferredVehicles || [],
-
-    // Documents (URLs) - optional, can be uploaded later
-    state: driverData.state || null,
-    languages: driverData.languages || [], // Array of strings
-
-    documents: driverData.documents || {
-      aadharFront: null,
-      aadharBack: null,
-      licenceFront: null,
-      licenceBack: null,
-    },
-
-    referralCode, // Store for easy display
+    driverType: has(driverData.driverType) || "driver",
+    referralCode,
     isVerified: false,
     isOnline: false,
     status: "active",
@@ -98,6 +68,22 @@ const createDriver = async (driverData) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+
+  // Optional fields — only add if they have a real value
+  if (has(driverData.licenceNumber)) driver.licenceNumber = driverData.licenceNumber;
+  if (has(driverData.vehicleNumber)) driver.vehicleNumber = driverData.vehicleNumber;
+  if (has(driverData.vehicleType)) driver.vehicleType = driverData.vehicleType;
+  if (has(driverData.vehicleBrand)) driver.vehicleBrand = driverData.vehicleBrand;
+  if (has(driverData.vehicleModel)) driver.vehicleModel = driverData.vehicleModel;
+  if (has(driverData.rcNumber || driverData.vehicleNumber)) driver.rcNumber = has(driverData.rcNumber) || has(driverData.vehicleNumber);
+  if (has(driverData.homeLocation)) driver.homeLocation = driverData.homeLocation;
+  if (has(driverData.aadharNumber)) driver.aadharNumber = driverData.aadharNumber;
+  if (has(driverData.dob)) driver.dob = driverData.dob;
+  if (has(driverData.tripType)) driver.tripType = driverData.tripType;
+  if (has(driverData.state)) driver.state = driverData.state;
+  if (driverData.vehicles && driverData.vehicles.length > 0) driver.vehicles = driverData.vehicles;
+  if (driverData.preferredVehicles && driverData.preferredVehicles.length > 0) driver.preferredVehicles = driverData.preferredVehicles;
+  if (driverData.languages && driverData.languages.length > 0) driver.languages = driverData.languages;
 
   try {
     await docClient.send(

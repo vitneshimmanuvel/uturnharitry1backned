@@ -148,18 +148,15 @@ router.post('/register', async (req, res) => {
             });
         }
 
-        // Create vendor with all provided fields
+        // Create vendor with provided registration fields only
         const vendor = await createVendor({
             businessName,
             ownerName,
             phone,
-            aadharNumber: req.body.aadharNumber || null,
-            panNumber: req.body.panNumber || null,
-            dob: req.body.dob || null,
-            city: req.body.city || null,
-            state: req.body.state || null,
-            languages: req.body.languages || [],
-            documents: req.body.documents || {}
+            aadharNumber: req.body.aadharNumber,
+            dob: req.body.dob,
+            state: req.body.state,
+            languages: req.body.languages
         });
 
         // Generate token
@@ -187,7 +184,7 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// Vendor login (phone-only, no password)
+// Vendor login (phone-only, no password) - WITH VERIFICATION CHECK
 router.post('/login', async (req, res) => {
     try {
         const { phone } = req.body;
@@ -203,10 +200,36 @@ router.post('/login', async (req, res) => {
         // Find vendor by phone
         const vendor = await findVendorByPhone(phone);
         if (!vendor) {
-            // Auto-register if not found (for seamless experience)
             return res.status(401).json({
                 success: false,
                 message: 'Phone number not registered. Please register first.'
+            });
+        }
+
+        // Check if vendor is blocked
+        if (vendor.status === 'blocked') {
+            return res.status(403).json({
+                success: false,
+                message: 'Your account has been blocked. Please contact admin.',
+                isBlocked: true
+            });
+        }
+
+        // Check verification status
+        if (vendor.verificationStatus === 'rejected') {
+            return res.status(403).json({
+                success: false,
+                message: vendor.rejectionReason || 'Your registration has been rejected. Please contact admin.',
+                verificationStatus: 'rejected',
+                rejectionReason: vendor.rejectionReason
+            });
+        }
+
+        if (vendor.isVerified !== true) {
+            return res.status(403).json({
+                success: false,
+                message: 'Your account is pending verification by admin. Please wait for approval.',
+                verificationStatus: 'pending'
             });
         }
 
@@ -295,7 +318,17 @@ const bookingModel = require('../models/bookingModel');
 router.get('/trips', authMiddleware, vendorOnly, async (req, res) => {
     try {
         const { status } = req.query;
-        const trips = await bookingModel.getVendorBookings(req.user.id, status || null);
+        
+        // Fetch standard bookings & solo rides assigned to this vendor
+        const [standardTrips, soloTrips] = await Promise.all([
+            bookingModel.getVendorBookings(req.user.id, status || null),
+            soloRideModel.getVendorSoloRides(req.user.id, status || null)
+        ]);
+
+        // Combine and sort by createdAt desc
+        const trips = [...standardTrips, ...soloTrips].sort(
+            (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+        );
         
         res.json({
             success: true,
@@ -480,6 +513,49 @@ router.post('/trips/:id/publish', authMiddleware, vendorOnly, async (req, res) =
     }
 });
 
+// Unpublish trip (pending → draft)
+router.post('/trips/:id/unpublish', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const trip = await bookingModel.getBookingById(req.params.id);
+        
+        if (!trip) {
+            return res.status(404).json({
+                success: false,
+                message: 'Trip not found'
+            });
+        }
+        
+        if (trip.vendorId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'Unauthorized access'
+            });
+        }
+        
+        if (trip.status !== 'pending') {
+            return res.status(400).json({
+                success: false,
+                message: 'Only published trips can be moved to draft'
+            });
+        }
+        
+        const unpublishedTrip = await bookingModel.unpublishBooking(req.params.id);
+        
+        res.json({
+            success: true,
+            message: 'Trip moved to draft successfully',
+            data: { trip: unpublishedTrip }
+        });
+    } catch (error) {
+        console.error('Unpublish trip error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to move trip to draft',
+            error: error.message
+        });
+    }
+});
+
 // Cancel trip
 router.post('/trips/:id/cancel', authMiddleware, vendorOnly, async (req, res) => {
     try {
@@ -571,7 +647,9 @@ router.get('/wallet', authMiddleware, vendorOnly, async (req, res) => {
             success: true,
             data: { 
                 balance: wallet.balance,
-                totalEarnings: wallet.totalEarnings || 0
+                totalEarnings: wallet.totalEarnings || 0,
+                totalAddedMoney: wallet.totalAddedMoney || 0,
+                totalWithdrawals: wallet.totalWithdrawals || 0
             }
         });
     } catch (error) {
@@ -603,6 +681,7 @@ router.get('/wallet/transactions', authMiddleware, vendorOnly, async (req, res) 
     }
 });
 
+
 // ==================== REFERRAL ENDPOINTS ====================
 
 const referralModel = require('../models/referralModel');
@@ -610,24 +689,38 @@ const referralModel = require('../models/referralModel');
 // Get referral info
 router.get('/referral', authMiddleware, vendorOnly, async (req, res) => {
     try {
+        const subscriptionModel = require('../models/subscriptionModel');
         const referral = await referralModel.getOrCreateReferral(req.user.id, req.user.phone || '0000000000');
-        
+
+        // Enrich referredUsers with their active plan + subscription amount
+        const enrichedUsers = await Promise.all(
+            (referral.referredUsers || []).map(async (u) => {
+                try {
+                    const sub = await subscriptionModel.getActiveSubscription(u.userId);
+                    return {
+                        ...u,
+                        activePlan: sub ? sub.planName : null,
+                        subscriptionAmount: sub ? sub.amount : null,
+                        isSubscribed: !!sub
+                    };
+                } catch (_) {
+                    return { ...u, activePlan: null, subscriptionAmount: null, isSubscribed: false };
+                }
+            })
+        );
+
         res.json({
             success: true,
             data: {
                 code: referral.code,
                 count: referral.totalReferrals || 0,
                 earnings: referral.earnings || 0,
-                referredUsers: referral.referredUsers || []
+                referredUsers: enrichedUsers
             }
         });
     } catch (error) {
         console.error('Get referral error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch referral info',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Failed to fetch referral info', error: error.message });
     }
 });
 
@@ -735,26 +828,39 @@ router.get('/stats/dashboard', authMiddleware, vendorOnly, async (req, res) => {
             completedTrips
         ] = await Promise.all([
             bookingModel.getVendorBookings(vendorId), // All
-            bookingModel.getVendorBookings(vendorId, 'pending,driver_accepted,vendor_approved,in_progress,pickup,drop,payment_pending,payment_verification_pending,commission_pending,commission_verification_pending'),
+            bookingModel.getVendorBookings(vendorId, 'pending,driver_accepted,vendor_approved,confirmed,in_progress,arrived,dropped,pickup,drop,payment_pending,payment_verification_pending,commission_pending,commission_verification_pending'),
             bookingModel.getVendorBookings(vendorId, 'driver_accepted'), // Pending Approvals
             bookingModel.getVendorBookings(vendorId, 'completed')
         ]);
         
-        // Calculate earnings for today
+        // Calculate earnings for today (Vendor commission)
         const today = new Date();
         const startOfDay = new Date(today.setHours(0, 0, 0, 0));
         
         const todayEarnings = completedTrips
             .filter(t => new Date(t.endTime || t.updatedAt) >= startOfDay)
-            .reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+            .reduce((sum, t) => {
+                const baseFareForComm = t.initialTotal || t.estimatedFare || t.fare || 0;
+                const pct = t.vendorCommissionPercentage || t.commissionPercent || 0;
+                return sum + ((baseFareForComm * pct) / 100);
+            }, 0);
+
+        const totalEarnings = completedTrips
+            .reduce((sum, t) => {
+                const baseFareForComm = t.initialTotal || t.estimatedFare || t.fare || 0;
+                const pct = t.vendorCommissionPercentage || t.commissionPercent || 0;
+                return sum + ((baseFareForComm * pct) / 100);
+            }, 0);
             
         res.json({
             success: true,
             data: {
                 totalTrips: allTrips.length,
+                totalCompletedTrips: completedTrips.length,
                 activeTrips: activeTrips.length,
                 pendingApprovals: pendingApprovals.length,
                 todayEarnings: todayEarnings,
+                totalEarnings: totalEarnings,
                 currency: 'INR'
             }
         });
@@ -768,4 +874,114 @@ router.get('/stats/dashboard', authMiddleware, vendorOnly, async (req, res) => {
     }
 });
 
+// ==================== WALLET ADD MONEY ====================
+
+// Add money to vendor wallet
+router.post('/wallet/add-money', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const { amount } = req.body;
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ success: false, message: 'Valid amount is required' });
+        }
+        if (amount > 50000) {
+            return res.status(400).json({ success: false, message: 'Maximum ₹50,000 can be added at once' });
+        }
+        const result = await walletModel.addMoney(req.user.id, amount);
+        res.json({
+            success: true,
+            message: `₹${amount} added to wallet successfully!`,
+            data: { balance: result.balance, transaction: result.transaction }
+        });
+    } catch (error) {
+        console.error('Add money error:', error);
+        res.status(500).json({ success: false, message: 'Failed to add money', error: error.message });
+    }
+});
+
+// ==================== SUBSCRIPTION ENDPOINTS ====================
+const subscriptionModel = require('../models/subscriptionModel');
+
+// Get subscription plans
+router.get('/subscription/plans', async (req, res) => {
+    try {
+        const plans = await subscriptionModel.getPlans('vendor');
+        res.json({ success: true, data: { plans } });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to fetch plans', error: error.message });
+    }
+});
+
+// Get my active subscription
+router.get('/subscription/my', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const subscription = await subscriptionModel.getActiveSubscription(req.user.id);
+        res.json({ success: true, data: { subscription } });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to fetch subscription', error: error.message });
+    }
+});
+
+// Subscribe to a plan
+router.post('/subscription/subscribe', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const { planId } = req.body;
+        if (!planId) {
+            return res.status(400).json({ success: false, message: 'Plan ID is required' });
+        }
+
+        const plan = await subscriptionModel.getPlanById(planId);
+        if (!plan) {
+            return res.status(404).json({ success: false, message: 'Plan not found' });
+        }
+
+        // Check existing subscription
+        const existing = await subscriptionModel.getActiveSubscription(req.user.id);
+        if (existing) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'You already have an active subscription. Wait for it to expire or cancel first.' 
+            });
+        }
+
+        // Check wallet balance
+        const wallet = await walletModel.getWallet(req.user.id);
+        if (wallet.balance < plan.amount) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `Insufficient balance. Need ₹${plan.amount}, have ₹${wallet.balance}.`,
+                data: { required: plan.amount, available: wallet.balance, deficit: plan.amount - wallet.balance }
+            });
+        }
+
+        // Deduct and subscribe
+        await walletModel.deductMoney(req.user.id, plan.amount, `Subscription: ${plan.name} Plan`);
+        const subscription = await subscriptionModel.createSubscription(req.user.id, 'vendor', planId);
+        const updatedWallet = await walletModel.getWallet(req.user.id);
+
+        res.json({
+            success: true,
+            message: `Subscribed to ${plan.name} plan!`,
+            data: { subscription, newBalance: updatedWallet.balance }
+        });
+    } catch (error) {
+        console.error('Subscribe error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Failed to subscribe' });
+    }
+});
+
+// Cancel subscription
+router.post('/subscription/cancel', authMiddleware, vendorOnly, async (req, res) => {
+    try {
+        const subscription = await subscriptionModel.getActiveSubscription(req.user.id);
+        if (!subscription) {
+            return res.status(404).json({ success: false, message: 'No active subscription found' });
+        }
+        await subscriptionModel.cancelSubscription(subscription.id);
+        res.json({ success: true, message: 'Subscription cancelled' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to cancel', error: error.message });
+    }
+});
+
 module.exports = router;
+

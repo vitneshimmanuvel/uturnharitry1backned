@@ -101,6 +101,14 @@ const createSoloRide = async (rideData, driver) => {
         perDayRate: rideData.perDayRate || 0,
         totalAmount: rideData.totalAmount || 0,
 
+        // Commission
+        vendorCommissionPercentage: Number(rideData.vendorCommissionPercentage || rideData.commissionPercent || 0),
+        vendorCommission: (() => {
+            const pct = Number(rideData.vendorCommissionPercentage || rideData.commissionPercent || 0);
+            const total = Number(rideData.totalAmount || 0);
+            return pct > 0 ? Math.round((total * pct) / 100) : 0;
+        })(),
+
         // Status: confirmed → in_progress → completed / cancelled
         status: 'confirmed',
 
@@ -131,16 +139,67 @@ const createSoloRide = async (rideData, driver) => {
 };
 
 /**
+ * Get solo rides by vendor ID
+ */
+const getVendorSoloRides = async (vendorId, status = null) => {
+    const params = {
+        TableName: TABLE_NAME,
+        FilterExpression: 'vendorId = :vendorId',
+        ExpressionAttributeValues: { ':vendorId': vendorId },
+    };
+
+    if (status) {
+        const statuses = status.split(',').map(s => s.trim());
+        params.ExpressionAttributeNames = params.ExpressionAttributeNames || {};
+        params.ExpressionAttributeNames['#status'] = 'status';
+        if (statuses.length === 1) {
+            params.FilterExpression += ' AND #status = :status';
+            params.ExpressionAttributeValues[':status'] = statuses[0];
+        } else {
+            const statusPlaceholders = statuses.map((_, i) => `:status${i}`);
+            params.FilterExpression += ` AND #status IN (${statusPlaceholders.join(', ')})`;
+            statuses.forEach((s, i) => {
+                params.ExpressionAttributeValues[`:status${i}`] = s;
+            });
+        }
+    }
+
+    const result = await docClient.send(new ScanCommand(params));
+    // Sort by createdAt descending
+    const rides = result.Items || [];
+    rides.forEach(r => r.isSolo = true); // Tag to identify in frontend if needed
+    rides.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return rides;
+};
+
+/**
  * Get all solo rides for a specific driver
  * @param {string} driverId - Driver ID
  * @returns {Promise<Array>} List of solo rides
  */
-const getSoloRides = async (driverId) => {
-    const result = await docClient.send(new ScanCommand({
+const getSoloRides = async (driverId, status = null) => {
+    const params = {
         TableName: TABLE_NAME,
         FilterExpression: 'driverId = :driverId',
         ExpressionAttributeValues: { ':driverId': driverId },
-    }));
+    };
+
+    if (status) {
+        const statuses = status.split(',').map(s => s.trim());
+        params.ExpressionAttributeNames = { '#status': 'status' };
+        if (statuses.length === 1) {
+            params.FilterExpression += ' AND #status = :status';
+            params.ExpressionAttributeValues[':status'] = statuses[0];
+        } else {
+            const statusPlaceholders = statuses.map((_, i) => `:status${i}`);
+            params.FilterExpression += ` AND #status IN (${statusPlaceholders.join(', ')})`;
+            statuses.forEach((s, i) => {
+                params.ExpressionAttributeValues[`:status${i}`] = s;
+            });
+        }
+    }
+
+    const result = await docClient.send(new ScanCommand(params));
 
     // Sort by createdAt descending
     const rides = result.Items || [];
@@ -230,7 +289,7 @@ const addToSoloWaitingTime = async (rideId, additionalMinutes) => {
 /**
  * Complete solo trip
  */
-const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerUrl, extraCharges) => {
+const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerUrl, tollCharges, parkingCharges, permitCharges, travelTimeSeconds) => {
     const ride = await getSoloRideById(rideId);
     if (!ride) throw new Error('Solo ride not found');
 
@@ -240,7 +299,7 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
     
     // Duration for allowances
     const startTime = new Date(ride.startTime);
-    const endTime = new Date();
+    const endTime = ride.droppedAt ? new Date(ride.droppedAt) : new Date();
     const diffMs = endTime - startTime;
     const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
@@ -273,38 +332,104 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
         totalAmount += (ride.waitingTimeMins * (Number(ride.waitingChargesPerMin) || 0));
     }
     
-    totalAmount += (Number(extraCharges) || 0);
+    const toll = Number(tollCharges) || 0;
+    const parking = Number(parkingCharges) || 0;
+    const permit = Number(permitCharges) || 0;
+    const extras = toll + parking + permit;
+    totalAmount += extras;
     totalAmount = Math.max(0, Math.round(totalAmount));
 
-    // Recalculate Vendor Commission proportionally
-    let vendorCommission = Number(ride.vendorCommission) || 0;
-    if (isDistanceBased || isDurationBased) {
-        const originalEstimated = Number(ride.totalAmount) || totalAmount || 1;
-        const originalCommission = Number(ride.vendorCommission) || 0;
-        const commissionRate = originalCommission / originalEstimated;
-        vendorCommission = Math.round(totalAmount * commissionRate);
-    }
+    // Calculate commission from the stored percentage (set by vendor)
+    const vendorCommissionPercentage = Number(ride.vendorCommissionPercentage) || 0;
+    const vendorCommission = vendorCommissionPercentage > 0 ? Math.round((totalAmount * vendorCommissionPercentage) / 100) : 0;
 
     const isCash = paymentMethod === 'cash';
-    // For Solo rides, we usually assume customer pays driver directly unless specified
-    const needsVerification = isCash; 
+    // Solo rides do not need vendor verification, complete directly
+    const needsVerification = false; 
 
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: rideId },
-        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, vendorCommission = :comm, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, finalTotal = :total, initialTotal = :initial, vendorCommission = :comm, extraCharges = :extras, tollCharges = :toll, parkingCharges = :parking, permitCharges = :permit, paymentMethod = :method, paymentStatus = :paymentStatus, travelTimeSeconds = :travelTime, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
-            ':status': 'completed',
+            ':status': needsVerification ? 'payment_verification_pending' : 'completed',
             ':endOdo': endOdo,
             ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
+            ':initial': Number(ride.totalAmount) || totalAmount,
             ':comm': vendorCommission,
-            ':extras': Number(extraCharges) || 0,
+            ':extras': extras,
+            ':toll': toll,
+            ':parking': parking,
+            ':permit': permit,
             ':method': paymentMethod,
+            ':paymentStatus': isCash ? 'pending' : 'completed',
+            ':travelTime': Number(travelTimeSeconds || ride.travelTimeSeconds || 0),
+            ':now': new Date().toISOString()
+        }
+    }));
+
+    return await getSoloRideById(rideId);
+};
+
+/**
+ * Mark solo trip as dropped/reached destination (Driver)
+ */
+const droppedSoloTrip = async (rideId, waitingTimeMins, travelTimeSeconds, endOdometer) => {
+    const ride = await getSoloRideById(rideId);
+    if (!ride) throw new Error('Solo ride not found');
+
+    const waitMins = Number(waitingTimeMins || 0);
+    const waitingRate = Number(ride.waitingChargesPerMin) || (Number(ride.waitingChargesPerHour) / 60) || 0;
+    const waitAmt = Math.round(waitMins * waitingRate);
+    
+    // For solo, we use baseFare or totalAmount as the base quote
+    const baseAmount = Number(ride.totalAmount) || Number(ride.baseFare) || 0;
+    const interimTotal = baseAmount + waitAmt;
+
+    let updateExpr = 'SET #status = :status, droppedAt = :now, updatedAt = :now, waitingTimeMins = :waitMins, travelTimeSeconds = :travelTime, totalAmount = :total, waitingChargesAmount = :waitAmt';
+    let exprValues = {
+        ':status': 'dropped',
+        ':now': new Date().toISOString(),
+        ':waitMins': waitMins,
+        ':travelTime': Number(travelTimeSeconds || 0),
+        ':total': interimTotal,
+        ':waitAmt': waitAmt
+    };
+
+    if (endOdometer !== undefined && endOdometer !== null) {
+        updateExpr += ', endOdometer = :endOdo';
+        exprValues[':endOdo'] = endOdometer;
+    }
+
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: updateExpr,
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: exprValues
+    }));
+    return await getSoloRideById(rideId);
+};
+
+/**
+ * Verify Solo Cash Payment (Vendor)
+ */
+const verifySoloCashPayment = async (rideId) => {
+    const ride = await getSoloRideById(rideId);
+    if (!ride) throw new Error('Solo ride not found');
+    
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: 'SET #status = :status, paymentStatus = :paymentStatus, updatedAt = :now',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+            ':status': 'commission_pending',
             ':paymentStatus': 'completed',
             ':now': new Date().toISOString()
         }
@@ -312,6 +437,51 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
 
     return await getSoloRideById(rideId);
 };
+
+/**
+ * Driver marks solo commission as paid
+ */
+const paySoloCommission = async (rideId) => {
+    const ride = await getSoloRideById(rideId);
+    if (!ride) throw new Error('Solo ride not found');
+    
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+            ':status': 'commission_verification_pending',
+            ':commissionStatus': 'paid_by_driver',
+            ':now': new Date().toISOString()
+        }
+    }));
+    
+    return await getSoloRideById(rideId);
+};
+
+/**
+ * Vendor approves solo commission
+ */
+const approveSoloCommission = async (rideId) => {
+    const ride = await getSoloRideById(rideId);
+    if (!ride) throw new Error('Solo ride not found');
+    
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: rideId },
+        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, completedAt = :now, updatedAt = :now',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+            ':status': 'completed',
+            ':commissionStatus': 'verified',
+            ':now': new Date().toISOString()
+        }
+    }));
+
+    return await getSoloRideById(rideId);
+};
+
 
 /**
  * Update a solo ride
@@ -350,11 +520,17 @@ const updateSoloRide = async (rideId, updates) => {
 module.exports = {
     createSoloRide,
     getSoloRides,
+    getVendorSoloRides,
     getSoloRideById,
     updateSoloRide,
     startSoloTrip,
     completeSoloTrip,
     addToSoloWaitingTime,
+    droppedSoloTrip,
+    verifySoloCashPayment,
+    paySoloCommission,
+    approveSoloCommission,
     findLatestSoloRideByPhone,
     TABLE_NAME,
 };
+

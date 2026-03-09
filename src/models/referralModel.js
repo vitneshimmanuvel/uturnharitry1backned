@@ -15,7 +15,9 @@ const client = new DynamoDBClient({
     }
 });
 
-const docClient = DynamoDBDocumentClient.from(client);
+const docClient = DynamoDBDocumentClient.from(client, {
+    marshallOptions: { removeUndefinedValues: true }
+});
 const TABLE_NAME = 'UTurnReferrals';
 const REFERRAL_BONUS = 500; // ₹500 per successful referral
 
@@ -87,10 +89,15 @@ const applyReferralCode = async (code, newUserId, newUserName, immediateBonus = 
     if (!referral) {
         throw new Error('Invalid referral code');
     }
-    
+
+    // Prevent self-referral
+    if (referral.vendorId === newUserId) {
+        throw new Error('You cannot use your own referral code');
+    }
+
     // Check if already referred
     if (referral.referredUsers?.some(u => u.userId === newUserId)) {
-        throw new Error('Already applied this referral');
+        throw new Error('You have already applied this referral code');
     }
 
     const referredUser = {

@@ -98,7 +98,12 @@ const createBooking = async (bookingData) => {
         extraCharges: bookingData.extraCharges || 0,
         tollCharges: bookingData.tollCharges || 0,
         driverAllowance: bookingData.driverAllowance || 0,
-        vendorCommission: bookingData.vendorCommission || 0,
+        vendorCommissionPercentage: Number(bookingData.vendorCommissionPercentage || bookingData.commissionPercent || 0),
+        vendorCommission: (() => {
+            const pct = Number(bookingData.vendorCommissionPercentage || bookingData.commissionPercent || 0);
+            const total = Number(bookingData.totalAmount || bookingData.estimatedFare || 0);
+            return pct > 0 ? Math.round((total * pct) / 100) : 0;
+        })(),
         packageAmount: bookingData.packageAmount || 0,
         estimatedFare: bookingData.estimatedFare || 0,
         totalAmount: bookingData.totalAmount || bookingData.estimatedFare || 0,
@@ -231,16 +236,16 @@ const getVendorBookings = async (vendorId, status = null) => {
     
     if (status) {
         const statuses = status.split(',').map(s => s.trim());
-        params.ExpressionAttributeNames = {};
+        params.ExpressionAttributeNames = params.ExpressionAttributeNames || {};
+        params.ExpressionAttributeNames['#status'] = 'status';
+        
         if (statuses.length === 1) {
             params.FilterExpression += ' AND #status = :status';
-            params.ExpressionAttributeNames['#status'] = 'status';
             params.ExpressionAttributeValues[':status'] = statuses[0];
         } else {
-            // Handle multiple statuses: #status IN (:s0, :s1, ...)
+            // Handle multiple statuses: #status IN (:status0, :status1, ...)
             const statusPlaceholders = statuses.map((_, i) => `:status${i}`);
             params.FilterExpression += ` AND #status IN (${statusPlaceholders.join(', ')})`;
-            params.ExpressionAttributeNames['#status'] = 'status';
             statuses.forEach((s, i) => {
                 params.ExpressionAttributeValues[`:status${i}`] = s;
             });
@@ -291,6 +296,26 @@ const publishBooking = async (bookingId) => {
 };
 
 /**
+ * Unpublish a pending booking (change status back to draft)
+ */
+const unpublishBooking = async (bookingId) => {
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId },
+        UpdateExpression: 'SET #status = :status, updatedAt = :now',
+        ExpressionAttributeNames: {
+            '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+            ':status': 'draft',
+            ':now': new Date().toISOString()
+        }
+    }));
+    
+    return await getBookingById(bookingId);
+};
+
+/**
  * Delete a draft booking
  */
 const deleteBooking = async (bookingId) => {
@@ -315,9 +340,18 @@ const getDriverBookings = async (driverId, status = null) => {
     };
     
     if (status) {
-        params.FilterExpression += ' AND #status = :status';
+        const statuses = status.split(',').map(s => s.trim());
         params.ExpressionAttributeNames = { '#status': 'status' };
-        params.ExpressionAttributeValues[':status'] = status;
+        if (statuses.length === 1) {
+            params.FilterExpression += ' AND #status = :status';
+            params.ExpressionAttributeValues[':status'] = statuses[0];
+        } else {
+            const statusPlaceholders = statuses.map((_, i) => `:status${i}`);
+            params.FilterExpression += ` AND #status IN (${statusPlaceholders.join(', ')})`;
+            statuses.forEach((s, i) => {
+                params.ExpressionAttributeValues[`:status${i}`] = s;
+            });
+        }
     }
     
     const result = await docClient.send(new ScanCommand(params));
@@ -573,7 +607,7 @@ const addToWaitingTime = async (bookingId, additionalMinutes) => {
         Key: { id: bookingId },
         UpdateExpression: 'SET waitingTimeMins = if_not_exists(waitingTimeMins, :zero) + :mins, updatedAt = :now',
         ExpressionAttributeValues: {
-            ':mins': additionalMinutes,
+            ':mins': Number(additionalMinutes),
             ':zero': 0,
             ':now': new Date().toISOString()
         }
@@ -585,19 +619,22 @@ const addToWaitingTime = async (bookingId, additionalMinutes) => {
 /**
  * Complete trip
  */
-const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUrl, extraCharges) => {
+const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUrl, tollCharges, parkingCharges, permitCharges, travelTimeSeconds) => {
     try {
         const booking = await getBookingById(bookingId);
         if (!booking) throw new Error('Booking not found');
     
     console.log(`[DEBUG] Completing Trip: ${bookingId}, PaymentMethod: ${paymentMethod}, PaymentMode: ${booking.paymentMode}`);
     
-    // Calculate actual distance
-    const actualDistanceKm = Math.max(0, endOdometer - booking.startOdometer);
+    // Calculate actual distance - use the endOdometer from dropped stage if available
+    const finalEndOdo = Number(endOdometer) || Number(booking.endOdometer) || 0;
+    const finalStartOdo = Number(booking.startOdometer) || 0;
+    const actualDistanceKm = Math.abs(finalEndOdo - finalStartOdo);
     
     // Calculate duration for allowances (days)
     const startTime = new Date(booking.startTime);
-    const endTime = new Date();
+    // Use droppedAt if available, otherwise now
+    const endTime = booking.droppedAt ? new Date(booking.droppedAt) : new Date();
     const diffMs = endTime - startTime;
     const diffHours = diffMs / (1000 * 60 * 60);
     const days = Math.max(1, Math.ceil(diffHours / 24));
@@ -608,63 +645,35 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     // 2. For Duration-based trips (localHourly/Rental), recalculate from days * perDayRate + allowances.
     // 3. For fixed/package trips, use original estimatedFare (agreed total) as base and only add on-trip extras.
     
-    const isDistanceBased = ['oneWay', 'roundTrip', 'localDriverAllowance'].includes(booking.tripType);
-    const isDurationBased = booking.tripType === 'localHourly';
-    let totalAmount = 0;
-
-    if (isDistanceBased) {
-        // Standard formula for flexible distance trips
-        totalAmount = (Number(booking.baseFare) || 0);
-        
-        // 1. Distance Charge (considering minKmPerDay if multi-day)
-        const minKmTotal = (Number(booking.minKmPerDay) || 0) * days;
-        const distToCharge = Math.max(actualDistanceKm, minKmTotal);
-        
-        totalAmount += (distToCharge * (Number(booking.perKmRate) || 0));
-        
-        // 2. Allowances (Driver Bata & Night are per-day)
-        totalAmount += ((Number(booking.driverAllowance) || 0) * days);
-        totalAmount += ((Number(booking.nightAllowance) || 0) * days);
-        
-        // 3. Hills Allowance (Flat)
-        totalAmount += (Number(booking.hillsAllowance) || 0);
-    } else if (isDurationBased) {
-        // Rental Formula: Days * PerDayRate + Allowances
-        const ratePerDay = Number(booking.perDayRate) || Number(booking.hourlyRate) || 0;
-        totalAmount = (days * ratePerDay);
-        
-        totalAmount += ((Number(booking.driverAllowance) || 0) * days);
-        totalAmount += ((Number(booking.nightAllowance) || 0) * days);
-        totalAmount += (Number(booking.hillsAllowance) || 0);
-        
-        // No distance charge for rentals usually, or maybe extraKmRate (not yet fully implemented in auto-calc here)
-    } else {
-        // Fixed formula for Packages etc. 
-        totalAmount = (Number(booking.estimatedFare) || Number(booking.fare) || 0);
-    }
+    // Use the initial agreed quote as the base total amount
+    let totalAmount = Number(booking.estimatedFare) || Number(booking.fare) || 0;
     
-    // 4. Waiting Charges
-    if (booking.waitingTimeMins > 0) {
-        const ratePerMin = Number(booking.waitingCharges) || 0; 
-        totalAmount += (ratePerMin * booking.waitingTimeMins);
+    // Only if it's a variable distance trip AND actual distance exceeds estimated distance by a significant margin, 
+    // we could potentially add more KM, but for now we simplify to respect the initial quote as base + extras.
+    // This is the "Initial amount there" requested.
+    console.log(`[DEBUG] Base quote for calculation: ${totalAmount}`);
+    
+    // 4. Waiting Charges (use waitingChargesPerMin or waitingCharges field)
+    const waitingRatePerMin = Number(booking.waitingChargesPerMin) || Number(booking.waitingCharges) || 0;
+    let waitingChargesAmount = 0;
+    if (booking.waitingTimeMins > 0 && waitingRatePerMin > 0) {
+        waitingChargesAmount = Math.round(waitingRatePerMin * booking.waitingTimeMins);
+        totalAmount += waitingChargesAmount;
     }
 
     // 5. Extra Charges (Toll, Parking, etc.)
-    const extras = Number(extraCharges) || 0;
+    const toll = Number(tollCharges) || 0;
+    const parking = Number(parkingCharges) || 0;
+    const permit = Number(permitCharges) || 0;
+    const extras = toll + parking + permit;
     totalAmount += extras;
     
     totalAmount = Math.max(0, Math.round(totalAmount));
 
-    // Recalculate Vendor Commission proportionally ONLY if total Amount changed for variable trips
-    // For fixed trips, the vendorCommission should remain exactly what the vendor specified
-    let vendorCommission = Number(booking.vendorCommission) || 0;
-    
-    if (isDistanceBased || isDurationBased) {
-        const originalEstimated = Number(booking.estimatedFare) || totalAmount || 1; 
-        const originalCommission = Number(booking.vendorCommission) || 0;
-        const commissionRate = originalCommission / originalEstimated;
-        vendorCommission = Math.round(totalAmount * commissionRate);
-    }
+    // Calculate commission from the stored percentage - ONLY on the initial quoted fare, not extras
+    const vendorCommissionPercentage = Number(booking.vendorCommissionPercentage) || 0;
+    const initialQuotedFare = Number(booking.estimatedFare) || Number(booking.fare) || 0;
+    const vendorCommission = vendorCommissionPercentage > 0 ? Math.round((initialQuotedFare * vendorCommissionPercentage) / 100) : 0;
     
     // Prepare update parameters
     const isCashPayment = paymentMethod === 'cash';
@@ -673,27 +682,34 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     
     const driverStatus = needsVerification ? 'blocked_for_payment' : 'active';
     
-    console.log(`[DEBUG] Final Fare: ${totalAmount} (Base: ${booking.baseFare}, Dist: ${actualDistanceKm}, Rate: ${booking.perKmRate}, Days: ${days}, Bata: ${booking.driverAllowance}, Hills: ${booking.hillsAllowance}, WaitMins: ${booking.waitingTimeMins}, extras: ${extras})`);
+    console.log(`[DEBUG] Final Fare: ${totalAmount} (Base: ${booking.baseFare}, Dist: ${actualDistanceKm}, Rate: ${booking.perKmRate}, Days: ${days}, Bata: ${booking.driverAllowance}, Hills: ${booking.hillsAllowance}, WaitMins: ${booking.waitingTimeMins}, WaitRate: ${waitingRatePerMin}, WaitAmt: ${waitingChargesAmount}, extras: ${extras})`);
     console.log(`[DEBUG] Payment Logic: isCash=${isCashPayment}, needsVerify=${needsVerification}, driverStatus=${driverStatus}`);
 
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, totalAmount = :total, vendorCommission = :comm, extraCharges = :extras, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :driverStatus, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, endOdometer = :endOdo, endOdometerUrl = :endOdoUrl, actualDistanceKm = :distance, endTime = :now, completedAt = :completedAt, totalAmount = :total, finalTotal = :total, initialTotal = :initial, vendorCommission = :comm, extraCharges = :extras, tollCharges = :toll, parkingCharges = :parking, permitCharges = :permit, waitingChargesAmount = :waitAmt, paymentMethod = :method, paymentStatus = :paymentStatus, driverStatus = :driverStatus, travelTimeSeconds = :travelTime, updatedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
         ExpressionAttributeValues: {
             ':status': needsVerification ? 'payment_verification_pending' : 'completed', 
-            ':endOdo': endOdometer,
+            ':completedAt': needsVerification ? null : new Date().toISOString(),
+            ':endOdo': finalEndOdo,
             ':endOdoUrl': endOdometerUrl || null,
             ':distance': actualDistanceKm,
             ':total': totalAmount,
+            ':initial': Number(booking.estimatedFare) || Number(booking.fare) || 0,
             ':comm': vendorCommission,
             ':extras': extras,
+            ':toll': toll,
+            ':parking': parking,
+            ':permit': permit,
+            ':waitAmt': waitingChargesAmount,
             ':method': paymentMethod,
             ':paymentStatus': isCashPayment ? 'pending' : 'completed', 
             ':driverStatus': driverStatus,
+            ':travelTime': Number(travelTimeSeconds || booking.travelTimeSeconds || 0),
             ':now': new Date().toISOString()
         }
     }));
@@ -733,6 +749,45 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
         fs.appendFileSync('complete_trip_error.log', `${new Date().toISOString()} - ${error.stack}\n`);
         throw error;
     }
+};
+
+/**
+ * Mark trip as dropped/reached destination (Driver)
+ */
+const droppedTrip = async (bookingId, waitingTimeMins, travelTimeSeconds, endOdometer) => {
+    const booking = await getBookingById(bookingId);
+    if (!booking) throw new Error('Booking not found');
+
+    const waitMins = Number(waitingTimeMins || 0);
+    const waitingRate = Number(booking.waitingChargesPerMin) || Number(booking.waitingCharges) || 0;
+    const waitAmt = Math.round(waitMins * waitingRate);
+    
+    const baseAmount = Number(booking.estimatedFare) || Number(booking.fare) || 0;
+    const interimTotal = baseAmount + waitAmt;
+
+    let updateExpr = 'SET #status = :status, droppedAt = :now, updatedAt = :now, waitingTimeMins = :waitMins, travelTimeSeconds = :travelTime, totalAmount = :total, waitingChargesAmount = :waitAmt';
+    let exprValues = {
+        ':status': 'dropped',
+        ':now': new Date().toISOString(),
+        ':waitMins': waitMins,
+        ':travelTime': Number(travelTimeSeconds || 0),
+        ':total': interimTotal,
+        ':waitAmt': waitAmt
+    };
+
+    if (endOdometer !== undefined && endOdometer !== null) {
+        updateExpr += ', endOdometer = :endOdo';
+        exprValues[':endOdo'] = endOdometer;
+    }
+
+    await docClient.send(new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { id: bookingId },
+        UpdateExpression: updateExpr,
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: exprValues
+    }));
+    return await getBookingById(bookingId);
 };
 
 /**
@@ -867,7 +922,7 @@ const approveCommission = async (bookingId) => {
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now',
+        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now, completedAt = :now',
         ExpressionAttributeNames: {
             '#status': 'status'
         },
@@ -887,19 +942,27 @@ const approveCommission = async (bookingId) => {
 };
 
 // Step 3b: Vendor rejects commission
-const rejectCommission = async (bookingId) => {
+const rejectCommission = async (bookingId, reason = null) => {
+    let updateExpr = 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now';
+    let exprVals = {
+        ':status': 'commission_pending', // Back to simplified pending state
+        ':commissionStatus': 'rejected',
+        ':now': new Date().toISOString()
+    };
+    
+    if (reason) {
+        updateExpr += ', commissionRejectReason = :reason';
+        exprVals[':reason'] = reason;
+    }
+
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: bookingId },
-        UpdateExpression: 'SET #status = :status, commissionStatus = :commissionStatus, updatedAt = :now',
+        UpdateExpression: updateExpr,
         ExpressionAttributeNames: {
             '#status': 'status'
         },
-        ExpressionAttributeValues: {
-            ':status': 'commission_pending', // Back to simplified pending state
-            ':commissionStatus': 'rejected',
-            ':now': new Date().toISOString()
-        }
+        ExpressionAttributeValues: exprVals
     }));
     
     return await getBookingById(bookingId);
@@ -936,6 +999,7 @@ module.exports = {
     getDraftBookings,
     getPendingBookings,
     publishBooking,
+    unpublishBooking,
     deleteBooking,
     getDriverBookings,
     acceptBooking,
@@ -952,5 +1016,6 @@ module.exports = {
     payCommission,
     approveCommission,
     rejectCommission,
-    findLatestBookingByPhone
+    findLatestBookingByPhone,
+    droppedTrip
 };

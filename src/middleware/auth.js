@@ -25,7 +25,12 @@ const authMiddleware = (req, res, next) => {
     
     // Check if token exists
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        // BYPASS: Use valid driver ID
+        // Disable bypass for admin routes to ensure proper permissions testing
+        if (req.path.startsWith('/admin')) {
+            return res.status(401).json({ success: false, message: 'Authentication token required' });
+        }
+
+        // BYPASS for other routes (Driver/Vendor testing)
         console.log('⚠️ No Token provided - USING BYPASS DRIVER');
         req.user = {
             id: 'b0d4b95b-6197-4428-a166-def825ab9628',
@@ -75,10 +80,40 @@ const driverOnly = (req, res, next) => {
     next();
 };
 
+// Admin-only middleware
+const adminOnly = (req, res, next) => {
+    if (!req.user || req.user.userType !== 'admin') {
+        return res.status(403).json({
+            success: false,
+            message: 'Access denied. Admins only.'
+        });
+    }
+    next();
+};
+
+// Middleware to check if admin has specific permission
+const checkPermission = (permission) => {
+    return (req, res, next) => {
+        if (!req.user || req.user.userType !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Access denied. Admins only.' });
+        }
+        if (req.user.role === 'super-admin') return next();
+        if (req.user.permissions && req.user.permissions.includes(permission)) {
+            return next();
+        }
+        return res.status(403).json({
+            success: false,
+            message: `Access denied. Requires ${permission} permission.`
+        });
+    };
+};
+
 module.exports = {
     generateToken,
     verifyToken,
     authMiddleware,
     vendorOnly,
-    driverOnly
+    driverOnly,
+    adminOnly,
+    checkPermission
 };

@@ -204,6 +204,42 @@ const setupTables = async () => {
     } else {
         console.log(`ℹ️ Table ${TABLES.MARKETPLACE_REQUESTS} already exists`);
     }
+    
+    // Create Subscription Plans table
+    const subscriptionPlansExists = await tableExists('UTurnSubscriptionPlans');
+    if (!subscriptionPlansExists) {
+        await createSubscriptionPlansTable();
+    } else {
+        console.log(`ℹ️ Table UTurnSubscriptionPlans already exists`);
+    }
+
+    // Seed default subscription plans
+    const { seedDefaultPlans } = require('../models/subscriptionModel');
+    await seedDefaultPlans();
+
+    // Create Subscriptions table
+    const subscriptionsExists = await tableExists('UTurnSubscriptions');
+    if (!subscriptionsExists) {
+        await createSubscriptionsTable();
+    } else {
+        console.log(`ℹ️ Table UTurnSubscriptions already exists`);
+    }
+
+    // Create Admins table
+    const adminsExists = await tableExists(TABLES.ADMINS);
+    if (!adminsExists) {
+        await createAdminsTable();
+    } else {
+        console.log(`ℹ️ Table ${TABLES.ADMINS} already exists`);
+    }
+
+    // Create Admin Logs table
+    const adminLogsExists = await tableExists(TABLES.ADMIN_LOGS);
+    if (!adminLogsExists) {
+        await createAdminLogsTable();
+    } else {
+        console.log(`ℹ️ Table ${TABLES.ADMIN_LOGS} already exists`);
+    }
 };
 
 // Create Wallet table
@@ -264,6 +300,76 @@ const createReferralsTable = async () => {
     }
 };
 
+// Create Subscription Plans table
+const createSubscriptionPlansTable = async () => {
+    const params = {
+        TableName: 'UTurnSubscriptionPlans',
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table UTurnSubscriptionPlans created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table UTurnSubscriptionPlans already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Create Subscriptions table
+const createSubscriptionsTable = async () => {
+    const params = {
+        TableName: 'UTurnSubscriptions',
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' },
+            { AttributeName: 'userId', AttributeType: 'S' }
+        ],
+        GlobalSecondaryIndexes: [
+            {
+                IndexName: 'userId-index',
+                KeySchema: [
+                    { AttributeName: 'userId', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table UTurnSubscriptions created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table UTurnSubscriptions already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
 // Create Marketplace Requests table
 const createMarketplaceRequestsTable = async () => {
     const params = {
@@ -279,13 +385,82 @@ const createMarketplaceRequestsTable = async () => {
             WriteCapacityUnits: 5
         }
     };
-
     try {
         await dynamoClient.send(new CreateTableCommand(params));
         console.log(`✅ Table ${TABLES.MARKETPLACE_REQUESTS} created successfully`);
     } catch (error) {
         if (error.name === 'ResourceInUseException') {
             console.log(`ℹ️ Table ${TABLES.MARKETPLACE_REQUESTS} already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Create Admins table
+const createAdminsTable = async () => {
+    const params = {
+        TableName: TABLES.ADMINS,
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' },
+            { AttributeName: 'username', AttributeType: 'S' }
+        ],
+        GlobalSecondaryIndexes: [
+            {
+                IndexName: 'username-index',
+                KeySchema: [
+                    { AttributeName: 'username', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table ${TABLES.ADMINS} created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table ${TABLES.ADMINS} already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Create Admin Logs table
+const createAdminLogsTable = async () => {
+    const params = {
+        TableName: TABLES.ADMIN_LOGS,
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table ${TABLES.ADMIN_LOGS} created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table ${TABLES.ADMIN_LOGS} already exists`);
         } else {
             throw error;
         }

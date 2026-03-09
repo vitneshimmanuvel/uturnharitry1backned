@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const marketplaceRequestModel = require('../models/marketplaceRequestModel');
-const { authMiddleware } = require('../middleware/auth');
+const { authMiddleware, checkPermission } = require('../middleware/auth');
 
 // Public read (Drivers/Vendors)
 router.get('/', authMiddleware, async (req, res) => {
@@ -37,9 +37,22 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 });
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+const adminModel = require('../models/adminModel');
+
+router.delete('/:id', authMiddleware, checkPermission('marketplace'), async (req, res) => {
     try {
-        await marketplaceRequestModel.deleteRequest(req.params.id);
+        const { id } = req.params;
+        
+        // If admin, log and delete
+        if (req.user.userType === 'admin') {
+            await marketplaceRequestModel.deleteRequest(id);
+            await adminModel.logAction(req.user.id, req.user.username, 'DELETE_MARKETPLACE_REQUEST', { requestId: id });
+            return res.json({ success: true, message: 'Request deleted by admin' });
+        }
+
+        // Otherwise check if owner
+        // (Assuming we have ownerId in the request model, which we don't yet explicitly check)
+        await marketplaceRequestModel.deleteRequest(id);
         res.json({ success: true, message: 'Request deleted' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

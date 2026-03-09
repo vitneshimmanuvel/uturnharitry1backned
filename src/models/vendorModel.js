@@ -7,33 +7,32 @@ const { docClient, TABLES } = require('../config/aws');
 const { PutCommand, GetCommand, QueryCommand, UpdateCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
 
 // Create a new vendor (phone-only, no password)
+// Only stores fields that have actual values — no null entries in DynamoDB
 const createVendor = async (vendorData) => {
     const id = uuidv4();
     
+    // Helper: returns value only if it's a non-empty string/value, otherwise undefined
+    const has = (val) => (val !== undefined && val !== null && (typeof val !== 'string' || val.trim() !== '')) ? val : undefined;
+
+    // Required / always-present fields
     const vendor = {
         id,
-        businessName: vendorData.businessName,
-        ownerName: vendorData.ownerName,
+        businessName: has(vendorData.businessName) || has(vendorData.ownerName) || 'Unknown',
+        ownerName: has(vendorData.ownerName) || 'Unknown',
         phone: vendorData.phone,
         isVerified: false,
         subscriptionPlan: 'free',
-        profileImage: vendorData.profileImage || '',
-        address: vendorData.address || '',
-        gstNumber: vendorData.gstNumber || '',
-        city: vendorData.city || '',
-        state: vendorData.state || '',
-        languages: vendorData.languages || [],
-        aadharNumber: vendorData.aadharNumber || null,
-        panNumber: vendorData.panNumber || null,
-        dob: vendorData.dob || null,
-        documents: vendorData.documents || {
-            aadhaar: null,
-            pan: null,
-            selfie: null
-        },
+        status: 'active',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
     };
+
+    // Optional fields — only add if they have a real value
+    if (has(vendorData.state)) vendor.state = vendorData.state;
+    if (has(vendorData.dob)) vendor.dob = vendorData.dob;
+    if (has(vendorData.aadharNumber)) vendor.aadharNumber = vendorData.aadharNumber;
+    if (vendorData.languages && vendorData.languages.length > 0) vendor.languages = vendorData.languages;
+    if (vendorData.documents && Object.keys(vendorData.documents).length > 0) vendor.documents = vendorData.documents;
 
     await docClient.send(new PutCommand({
         TableName: TABLES.VENDORS,

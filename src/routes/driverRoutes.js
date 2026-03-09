@@ -252,6 +252,7 @@ router.post('/register', async (req, res) => {
             preferredVehicles,
             aadharNumber: aadharNumber || null,
             dob: dob || null,
+            homeLocation: homeLocation || null,
             tripType: tripType || null,
             vehicles: normalizedVehicles,
             state: req.body.state,
@@ -283,7 +284,7 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// Driver login - Phone Only (No Password)
+// Driver login - Phone Only (No Password) - WITH VERIFICATION CHECK
 router.post('/login', async (req, res) => {
     try {
         const { phone } = req.body;
@@ -300,6 +301,33 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({
                 success: false,
                 message: 'Phone number not registered. Please register first.'
+            });
+        }
+
+        // Check if driver is blocked
+        if (driver.status === 'blocked') {
+            return res.status(403).json({
+                success: false,
+                message: 'Your account has been blocked. Please contact admin.',
+                isBlocked: true
+            });
+        }
+
+        // Check verification status
+        if (driver.verificationStatus === 'rejected') {
+            return res.status(403).json({
+                success: false,
+                message: driver.rejectionReason || 'Your registration has been rejected. Please contact admin.',
+                verificationStatus: 'rejected',
+                rejectionReason: driver.rejectionReason
+            });
+        }
+
+        if (driver.isVerified !== true) {
+            return res.status(403).json({
+                success: false,
+                message: 'Your account is pending verification by admin. Please wait for approval.',
+                verificationStatus: 'pending'
             });
         }
 
@@ -520,7 +548,8 @@ router.post('/solo-trip', authMiddleware, driverOnly, async (req, res) => {
 router.get('/solo-trips', authMiddleware, driverOnly, async (req, res) => {
     try {
         const { getSoloRides } = require('../models/soloRideModel');
-        const rides = await getSoloRides(req.user.id);
+        const { status } = req.query;
+        const rides = await getSoloRides(req.user.id, status);
         
         res.json({
             success: true,
@@ -537,10 +566,28 @@ router.get('/rides', authMiddleware, driverOnly, async (req, res) => {
     try {
         const { getDriverBookings } = require('../models/bookingModel');
         const { getSoloRides } = require('../models/soloRideModel');
+        const { status } = req.query;
         
-        const vendorRides = await getDriverBookings(req.user.id);
-        const soloRides = await getSoloRides(req.user.id);
+        const vendorRides = await getDriverBookings(req.user.id, status);
+        const soloRides = await getSoloRides(req.user.id, status);
         
+        // Attach vendor details to vendor rides
+        const vendorModel = require('../models/vendorModel');
+        for (const ride of vendorRides) {
+            if (ride.vendorId && !ride.vendor) {
+                try {
+                    const vendor = await vendorModel.findVendorById(ride.vendorId);
+                    if (vendor) {
+                        ride.vendor = {
+                            businessName: vendor.businessName,
+                            ownerName: vendor.ownerName,
+                            phone: vendor.phone,
+                        };
+                    }
+                } catch (e) { /* ignore */ }
+            }
+        }
+
         // Mark solo rides as such
         const adjustedSolo = soloRides.map(r => ({ ...r, isSolo: true }));
         
@@ -588,7 +635,291 @@ router.get('/rides/available', authMiddleware, driverOnly, async (req, res) => {
     }
 });
 
-// Get driver by ID
+
+// ==================== WALLET ENDPOINTS ====================
+const walletModel = require('../models/walletModel');
+
+// Get wallet balance
+router.get('/wallet/balance', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const wallet = await walletModel.getWallet(req.user.id);
+        res.json({
+            success: true,
+            data: { 
+                balance: wallet.balance,
+                totalEarnings: wallet.totalEarnings || 0,
+                totalAddedMoney: wallet.totalAddedMoney || 0,
+                totalWithdrawals: wallet.totalWithdrawals || 0
+            }
+        });
+    } catch (error) {
+        console.error('Get wallet error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch wallet', error: error.message });
+    }
+});
+
+// Get wallet transactions
+router.get('/wallet/transactions', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const transactions = await walletModel.getTransactions(req.user.id);
+        res.json({
+            success: true,
+            data: { transactions }
+        });
+    } catch (error) {
+        console.error('Get transactions error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch transactions', error: error.message });
+    }
+});
+
+
+// Add money to wallet
+router.post('/wallet/add-money', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { amount } = req.body;
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ success: false, message: 'Valid amount is required' });
+        }
+        if (amount > 50000) {
+            return res.status(400).json({ success: false, message: 'Maximum ₹50,000 can be added at once' });
+        }
+        const result = await walletModel.addMoney(req.user.id, amount);
+        res.json({
+            success: true,
+            message: `₹${amount} added to wallet successfully!`,
+            data: { balance: result.balance, transaction: result.transaction }
+        });
+    } catch (error) {
+        console.error('Add money error:', error);
+        res.status(500).json({ success: false, message: 'Failed to add money', error: error.message });
+    }
+});
+
+// ==================== SUBSCRIPTION ENDPOINTS ====================
+const subscriptionModel = require('../models/subscriptionModel');
+
+// Get subscription plans
+router.get('/subscription/plans', async (req, res) => {
+    try {
+        const plans = await subscriptionModel.getPlans('driver');
+        res.json({ success: true, data: { plans } });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to fetch plans', error: error.message });
+    }
+});
+
+// Get my active subscription
+router.get('/subscription/my', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const subscription = await subscriptionModel.getActiveSubscription(req.user.id);
+        res.json({ success: true, data: { subscription } });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to fetch subscription', error: error.message });
+    }
+});
+
+// Subscribe to a plan
+router.post('/subscription/subscribe', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { planId } = req.body;
+        if (!planId) {
+            return res.status(400).json({ success: false, message: 'Plan ID is required' });
+        }
+
+        const plan = await subscriptionModel.getPlanById(planId);
+        if (!plan) {
+            return res.status(404).json({ success: false, message: 'Plan not found' });
+        }
+
+        // Check existing subscription
+        const existing = await subscriptionModel.getActiveSubscription(req.user.id);
+        if (existing) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'You already have an active subscription. Wait for it to expire or cancel first.' 
+            });
+        }
+
+        // Check wallet balance
+        const wallet = await walletModel.getWallet(req.user.id);
+        if (wallet.balance < plan.amount) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `Insufficient balance. Need ₹${plan.amount}, have ₹${wallet.balance}.`,
+                data: { required: plan.amount, available: wallet.balance, deficit: plan.amount - wallet.balance }
+            });
+        }
+
+        // Deduct and subscribe
+        await walletModel.deductMoney(req.user.id, plan.amount, `Subscription: ${plan.name} Plan`);
+        const subscription = await subscriptionModel.createSubscription(req.user.id, 'driver', planId);
+        const updatedWallet = await walletModel.getWallet(req.user.id);
+
+        res.json({
+            success: true,
+            message: `Subscribed to ${plan.name} plan!`,
+            data: { subscription, newBalance: updatedWallet.balance }
+        });
+    } catch (error) {
+        console.error('Subscribe error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Failed to subscribe' });
+    }
+});
+
+// Cancel subscription
+router.post('/subscription/cancel', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const subscription = await subscriptionModel.getActiveSubscription(req.user.id);
+        if (!subscription) {
+            return res.status(404).json({ success: false, message: 'No active subscription found' });
+        }
+        await subscriptionModel.cancelSubscription(subscription.id);
+        res.json({ success: true, message: 'Subscription cancelled' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to cancel', error: error.message });
+    }
+});
+
+// ==================== VEHICLE MANAGEMENT ENDPOINTS ====================
+
+// Check which drivers are using given vehicle numbers (for sharing/availability)
+router.post('/vehicles/check-availability', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { vehicleNumbers } = req.body;
+        if (!vehicleNumbers || !Array.isArray(vehicleNumbers)) {
+            return res.status(400).json({ success: false, message: 'vehicleNumbers array required' });
+        }
+
+        const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+        const { docClient, TABLE_NAMES } = require('../config/aws');
+        const { normalizeVehicleNumber } = require('../models/driverModel');
+
+        // Get all drivers
+        const allDrivers = await docClient.send(new ScanCommand({ TableName: TABLE_NAMES.drivers }));
+        const drivers = allDrivers.Items || [];
+
+        const result = {};
+        for (const vNum of vehicleNumbers) {
+            const normalized = normalizeVehicleNumber(vNum);
+            if (!normalized) { result[vNum] = { isFree: true, isInUse: false }; continue; }
+
+            // Find any OTHER driver currently using this vehicle (active or as primary)
+            const usedBy = drivers.find(d => {
+                if (d.id === req.user.id) return false; // skip self
+                const dActive = normalizeVehicleNumber(d.activeVehicleNumber);
+                const dPrimary = normalizeVehicleNumber(d.vehicleNumber);
+                // Check if the vehicle is in their vehicles array too
+                const inArray = (d.vehicles || []).some(v => normalizeVehicleNumber(v.vehicleNumber || v.registration_number) === normalized);
+                return (dActive === normalized || dPrimary === normalized || inArray) && d.isOnline;
+            });
+
+            if (usedBy) {
+                result[vNum] = { isFree: false, isInUse: true, inUseBy: usedBy.name, inUseById: usedBy.id };
+            } else {
+                result[vNum] = { isFree: true, isInUse: false };
+            }
+        }
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('Vehicle check-availability error:', error);
+        res.status(500).json({ success: false, message: 'Failed to check', error: error.message });
+    }
+});
+
+// Set active vehicle for a driver
+router.post('/vehicles/set-active', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { vehicleNumber } = req.body;
+        if (!vehicleNumber) return res.status(400).json({ success: false, message: 'vehicleNumber required' });
+
+        await updateDriver(req.user.id, { activeVehicleNumber: vehicleNumber });
+        res.json({ success: true, message: 'Active vehicle updated' });
+    } catch (error) {
+        console.error('Set active vehicle error:', error);
+        res.status(500).json({ success: false, message: 'Failed to set active vehicle', error: error.message });
+    }
+});
+
+// Free (release) active vehicle so others can use it
+router.post('/vehicles/free', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        await updateDriver(req.user.id, { activeVehicleNumber: null });
+        res.json({ success: true, message: 'Vehicle freed successfully' });
+    } catch (error) {
+        console.error('Free vehicle error:', error);
+        res.status(500).json({ success: false, message: 'Failed to free vehicle', error: error.message });
+    }
+});
+
+// ==================== DRIVER REFERRAL ENDPOINTS ====================
+
+// Get driver referral info (get or create)
+router.get('/referral', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const referralModel = require('../models/referralModel');
+        const subscriptionModel = require('../models/subscriptionModel');
+        const referral = await referralModel.getOrCreateReferral(req.user.id, req.user.phone || '0000000000');
+
+        // Enrich referredUsers with their active plan + subscription amount
+        const enrichedUsers = await Promise.all(
+            (referral.referredUsers || []).map(async (u) => {
+                try {
+                    const sub = await subscriptionModel.getActiveSubscription(u.userId);
+                    return {
+                        ...u,
+                        activePlan: sub ? sub.planName : null,
+                        subscriptionAmount: sub ? sub.amount : null,
+                        isSubscribed: !!sub
+                    };
+                } catch (_) {
+                    return { ...u, activePlan: null, subscriptionAmount: null, isSubscribed: false };
+                }
+            })
+        );
+
+        res.json({
+            success: true,
+            data: {
+                code: referral.code,
+                count: referral.totalReferrals || 0,
+                earnings: referral.earnings || 0,
+                referredUsers: enrichedUsers
+            }
+        });
+    } catch (error) {
+        console.error('Get driver referral error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch referral info', error: error.message });
+    }
+});
+
+// Apply referral code (driver enters someone's code at registration/profile)
+router.post('/referral/apply', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { code } = req.body;
+        if (!code) {
+            return res.status(400).json({ success: false, message: 'Referral code is required' });
+        }
+        const referralModel = require('../models/referralModel');
+        const result = await referralModel.applyReferralCode(
+            code.toUpperCase(),
+            req.user.id,
+            req.user.name,
+            true // immediate bonus
+        );
+        res.json({
+            success: true,
+            message: `Referral applied! ₹${result.bonus} bonus credited to referrer.`,
+            data: result
+        });
+    } catch (error) {
+        console.error('Apply driver referral error:', error);
+        res.status(400).json({ success: false, message: error.message || 'Failed to apply referral' });
+    }
+});
+
+// ==================== CATCH-ALL: Get driver by ID ====================
+// IMPORTANT: This MUST be the last route because /:id matches everything
 router.get('/:id', async (req, res) => {
     try {
         const driver = await findDriverById(req.params.id);

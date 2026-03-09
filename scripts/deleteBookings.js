@@ -26,7 +26,8 @@ const docClient = DynamoDBDocumentClient.from(ddbClient);
 
 const TABLES = {
     BOOKINGS: "uturn-bookings",
-    SOLO_RIDES: "uturn-solo-rides"
+    SOLO_RIDES: "uturn-solo-rides",
+    NOTIFICATIONS: "uturn-notifications"
 };
 
 async function deleteTableItems(tableName) {
@@ -70,6 +71,7 @@ async function main() {
     console.log('⚠️  Starting Data Deletion...');
     await deleteTableItems(TABLES.BOOKINGS);
     await deleteTableItems(TABLES.SOLO_RIDES);
+    await deleteTableItems(TABLES.NOTIFICATIONS);
     console.log('✅ Data Deletion Finished.');
 }
 

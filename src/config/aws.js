@@ -45,6 +45,11 @@ const TABLES = {
   SOLO_RIDES: "uturn-solo-rides",
   MARKETPLACE_REQUESTS: "uturn-marketplace-requests",
   NOTIFICATIONS: "uturn-notifications",
+  SUBSCRIPTIONS: "UTurnSubscriptions",
+  SUBSCRIPTION_PLANS: "UTurnSubscriptionPlans",
+  WALLET: "UTurnWallet",
+  ADMINS: "uturn-admins",
+  ADMIN_LOGS: "uturn-admin-logs",
 };
 
 // Alias for TABLE_NAMES
