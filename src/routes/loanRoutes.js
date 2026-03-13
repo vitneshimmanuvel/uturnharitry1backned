@@ -16,7 +16,7 @@ router.post('/', authMiddleware, async (req, res) => {
     try {
         const loan = await loanModel.createLoan({
             ...req.body,
-            source: 'vendor' // or 'admin'
+            source: req.user.userType || req.user.driverType || 'unknown'
         });
         res.status(201).json({ success: true, data: loan });
     } catch (error) {

@@ -922,12 +922,25 @@ router.get('/track/:trackingId', async (req, res) => {
         
         // Find booking by tracking ID or regular ID
         let booking = await bookingModel.getBookingByTrackingId(trackingId);
-        
+        let isSolo = false;
+
         if (!booking) {
             // Try as regular booking ID
             booking = await bookingModel.getBookingById(trackingId);
         }
-        
+
+        // Try Solo Ride if not found in Bookings
+        const soloRideModel = require('../models/soloRideModel');
+        if (!booking) {
+            booking = await soloRideModel.getSoloRideByTrackingId(trackingId);
+            if (booking) isSolo = true;
+        }
+
+        if (!booking) {
+            booking = await soloRideModel.getSoloRideById(trackingId);
+            if (booking) isSolo = true;
+        }
+
         if (!booking) {
             return res.status(404).json({
                 success: false,
@@ -948,13 +961,13 @@ router.get('/track/:trackingId', async (req, res) => {
             pickupAddress: booking.pickupAddress,
             pickupCity: booking.pickupCity,
             pickupLocation: booking.pickupLocation,
-            dropAddress: booking.dropAddress,
+            dropAddress: booking.dropAddress || booking.drop, // Handle Solo drop format
             dropCity: booking.dropCity,
             dropLocation: booking.dropLocation,
             vehicleType: booking.vehicleType,
             tripType: booking.tripType,
-            scheduleDate: booking.scheduleDate,
-            scheduleTime: booking.scheduleTime,
+            scheduleDate: booking.scheduleDate || booking.scheduledDate, // Handle Solo scheduled date
+            scheduleTime: booking.scheduleTime || booking.scheduledTime, // Handle Solo scheduled time
             distanceKm: booking.distanceKm,
             estimatedDurationMins: booking.estimatedDurationMins,
             packageAmount: booking.packageAmount,
@@ -963,6 +976,8 @@ router.get('/track/:trackingId', async (req, res) => {
             totalAmount: booking.totalAmount,
             startTime: booking.startTime,
             endTime: booking.endTime,
+            waitingTimeMins: booking.waitingTimeMins || 0,
+            otp: booking.otp,
             // Only show driver details if approved (not for pending/cancelled)
             driverName: booking.status !== 'pending' && booking.status !== 'cancelled' ? booking.driverName : null,
             vehicleNumber: booking.status !== 'pending' && booking.status !== 'cancelled' ? booking.vehicleNumber : null,

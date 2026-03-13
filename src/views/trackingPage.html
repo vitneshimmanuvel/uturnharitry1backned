@@ -265,6 +265,80 @@
         color: #888;
         font-size: 12px;
       }
+
+      /* OTP Box */
+      .otp-box {
+        background: #1a1a2e;
+        color: #ffd700;
+        text-align: center;
+        padding: 16px;
+        border-radius: 12px;
+        margin: 16px 0;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      }
+      .otp-label {
+        font-size: 12px;
+        color: #aaa;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 4px;
+      }
+      .otp-code {
+        font-size: 32px;
+        font-weight: 900;
+        letter-spacing: 8px;
+        font-family: monospace;
+      }
+
+      /* SOS Button */
+      .sos-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #dc3545;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 20px;
+        font-weight: bold;
+        text-decoration: none;
+        margin-top: 12px;
+        box-shadow: 0 4px 10px rgba(220, 53, 69, 0.3);
+        transition: transform 0.2s;
+      }
+      .sos-btn:active {
+        transform: scale(0.95);
+      }
+      .sos-icon {
+        margin-right: 8px;
+        font-size: 18px;
+      }
+
+      /* Realtime Stats */
+      .live-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .stat-card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        border: 1px solid #eee;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+      }
+      .stat-val {
+        font-size: 24px;
+        font-weight: bold;
+        color: #1a1a2e;
+      }
+      .stat-label {
+        font-size: 11px;
+        color: #888;
+        text-transform: uppercase;
+        margin-top: 4px;
+      }
     </style>
   </head>
   <body>
@@ -289,11 +363,34 @@
           <h1>🚗 UTurn Ride</h1>
           <p>Your ride details</p>
           <span class="booking-id" id="bookingId">--</span>
+          <div>
+            <a href="tel:100" class="sos-btn">
+              <span class="sos-icon">🚨</span> SOS EMERGENCY
+            </a>
+          </div>
         </div>
 
         <!-- Status -->
         <div style="text-align: center">
           <span class="status-badge" id="statusBadge">Loading...</span>
+        </div>
+
+        <!-- Start OTP Banner -->
+        <div id="otpBanner" class="otp-box" style="display: none;">
+          <div class="otp-label">Provide this OTP to Driver to Start Ride</div>
+          <div class="otp-code" id="startOtp">----</div>
+        </div>
+
+        <!-- Live Stats (Travel Time & Waiting Time) -->
+        <div id="liveStatsContainer" class="live-stats" style="display: none;">
+          <div class="stat-card">
+            <div class="stat-val" id="liveTravelTime">0m</div>
+            <div class="stat-label">Travel Time</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-val" id="liveWaitingTime">0m</div>
+            <div class="stat-label">Waiting Time</div>
+          </div>
         </div>
 
         <!-- Closed Ride Banner -->
@@ -401,6 +498,8 @@
       const API_BASE = window.location.origin + "/api";
 
       let map = null;
+      let liveTimerInterval = null;
+      let pollingInterval = null;
 
       async function loadBooking() {
         try {
@@ -434,6 +533,39 @@
         const statusBadge = document.getElementById("statusBadge");
         statusBadge.textContent = formatStatus(booking.status);
         statusBadge.className = `status-badge status-${booking.status}`;
+
+        // OTP Banner (Only before ride starts)
+        const otpBanner = document.getElementById("otpBanner");
+        if ((booking.status === "driver_assigned" || booking.status === "driver_approved" || booking.status === "arrived" || booking.status === "confirmed" || booking.status === "pending") && booking.otp) {
+          otpBanner.style.display = "block";
+          document.getElementById("startOtp").textContent = booking.otp;
+        } else {
+          otpBanner.style.display = "none";
+        }
+
+        // Live Stats Component (Only when ride is in progress)
+        const liveStatsContainer = document.getElementById("liveStatsContainer");
+        if (booking.status === "in_transit" || booking.status === "started" || booking.status === "in_progress") {
+          liveStatsContainer.style.display = "grid";
+          
+          if (liveTimerInterval) clearInterval(liveTimerInterval);
+          
+          const updateTravelTime = () => {
+            const startTimeMs = new Date(booking.startTime).getTime();
+            const nowMs = new Date().getTime();
+            const travelMinutes = Math.floor((nowMs - startTimeMs) / 60000);
+            document.getElementById("liveTravelTime").textContent = travelMinutes > 0 ? `${travelMinutes}m` : '0m';
+          };
+          
+          updateTravelTime();
+          liveTimerInterval = setInterval(updateTravelTime, 60000); // Update every minute
+          
+          // Waiting Time display
+          document.getElementById("liveWaitingTime").textContent = `${booking.waitingTimeMins || 0}m`;
+        } else {
+          liveStatsContainer.style.display = "none";
+          if (liveTimerInterval) { clearInterval(liveTimerInterval); liveTimerInterval = null; }
+        }
 
         // Show closed banner if ride is complete/cancelled
         if (booking.isClosed) {
@@ -479,7 +611,7 @@
         document.getElementById("scheduleTime").textContent =
           booking.scheduleTime || "ASAP";
         document.getElementById("duration").textContent = `${
-          booking.estimatedDurationMins || "--"
+          booking.estimatedDurationMins != null ? Math.round(booking.estimatedDurationMins) : "--"
         } min`;
         document.getElementById("startTime").textContent =
           formatTime(booking.startTime) || "--";
@@ -491,7 +623,7 @@
           booking.distanceKm?.toFixed(1) || "--"
         } km`;
         document.getElementById("baseFare").textContent = `₹${
-          booking.packageAmount || booking.estimatedFare || "--"
+          booking.packageAmount || booking.baseFare || booking.estimatedFare || "--"
         }`;
         document.getElementById("waitingCharges").textContent = `₹${
           booking.waitingCharges || 0
@@ -604,10 +736,14 @@
       function formatStatus(status) {
         const statusMap = {
           pending: "⏳ Pending",
+          confirmed: "✅ Trip Confirmed",
           driver_assigned: "✅ Driver Assigned",
           driver_approved: "🚗 Driver Approved",
+          started: "🛣️ Trip Started",
+          in_progress: "🛣️ In Progress",
           in_transit: "🛣️ In Transit",
           completed: "✔️ Completed",
+          closed: "✔️ Closed",
           cancelled: "❌ Cancelled",
         };
         return statusMap[status] || status;
@@ -627,8 +763,9 @@
         });
       }
 
-      // Load on page ready
+      // Load on page ready and start polling
       loadBooking();
+      pollingInterval = setInterval(loadBooking, 30000); // Poll every 30 seconds
     </script>
   </body>
 </html>

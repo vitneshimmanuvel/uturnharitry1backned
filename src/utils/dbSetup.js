@@ -157,6 +157,90 @@ const createBookingsTable = async () => {
     }
 };
 
+// Create Rate Cards table
+const createRateCardsTable = async () => {
+    const params = {
+        TableName: 'RateCards',
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' },
+            { AttributeName: 'vendorId', AttributeType: 'S' }
+        ],
+        GlobalSecondaryIndexes: [
+            {
+                IndexName: 'vendor-index',
+                KeySchema: [
+                    { AttributeName: 'vendorId', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table RateCards created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table RateCards already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
+// Create Jobs table
+const createJobsTable = async () => {
+    const params = {
+        TableName: 'UTurnJobs',
+        KeySchema: [
+            { AttributeName: 'id', KeyType: 'HASH' }
+        ],
+        AttributeDefinitions: [
+            { AttributeName: 'id', AttributeType: 'S' },
+            { AttributeName: 'creatorId', AttributeType: 'S' }
+        ],
+        GlobalSecondaryIndexes: [
+            {
+                IndexName: 'creator-index',
+                KeySchema: [
+                    { AttributeName: 'creatorId', KeyType: 'HASH' }
+                ],
+                Projection: { ProjectionType: 'ALL' },
+                ProvisionedThroughput: {
+                    ReadCapacityUnits: 5,
+                    WriteCapacityUnits: 5
+                }
+            }
+        ],
+        ProvisionedThroughput: {
+            ReadCapacityUnits: 5,
+            WriteCapacityUnits: 5
+        }
+    };
+
+    try {
+        await dynamoClient.send(new CreateTableCommand(params));
+        console.log(`✅ Table UTurnJobs created successfully`);
+    } catch (error) {
+        if (error.name === 'ResourceInUseException') {
+            console.log(`ℹ️ Table UTurnJobs already exists`);
+        } else {
+            throw error;
+        }
+    }
+};
+
 // Setup all tables
 const setupTables = async () => {
     const vendorExists = await tableExists(TABLES.VENDORS);
@@ -179,6 +263,20 @@ const setupTables = async () => {
         await createBookingsTable();
     } else {
         console.log(`ℹ️ Table UTurnBookings already exists`);
+    }
+    
+    const rateCardsExists = await tableExists('RateCards');
+    if (!rateCardsExists) {
+        await createRateCardsTable();
+    } else {
+        console.log(`ℹ️ Table RateCards already exists`);
+    }
+
+    const jobsExists = await tableExists('UTurnJobs');
+    if (!jobsExists) {
+        await createJobsTable();
+    } else {
+        console.log(`ℹ️ Table UTurnJobs already exists`);
     }
     
     // Create Wallet table

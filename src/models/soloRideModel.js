@@ -113,7 +113,7 @@ const createSoloRide = async (rideData, driver) => {
         status: 'confirmed',
 
         // Trip tracking
-        otp: null,
+        otp: Math.floor(1000 + Math.random() * 9000).toString(),
         startOdometer: null,
         endOdometer: null,
         actualDistanceKm: null,
@@ -241,14 +241,31 @@ const getSoloRideById = async (rideId) => {
 };
 
 /**
+ * Get a solo ride by Tracking ID
+ */
+const getSoloRideByTrackingId = async (trackingId) => {
+    const result = await docClient.send(new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: 'trackingId = :tid',
+        ExpressionAttributeValues: { ':tid': trackingId },
+    }));
+
+    const rides = result.Items || [];
+    if (rides.length === 0) return null;
+    return rides[0];
+};
+/**
  * Start solo trip
  */
 const startSoloTrip = async (rideId, startOdometer, otp, startOdometerUrl) => {
     const ride = await getSoloRideById(rideId);
     if (!ride) throw new Error('Solo ride not found');
     
-    // Solo trips might not strictly require OTP in all flows, but if provided, we can validate.
-    // For now, mirroring bookingModel logic.
+    // Strict OTP Validation
+    if (ride.otp) {
+        if (!otp || otp.length !== 4) throw new Error('OTP must be 4 digits');
+        if (ride.otp !== otp) throw new Error('Invalid OTP. Please check with customer.');
+    }
     
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
@@ -304,30 +321,10 @@ const completeSoloTrip = async (rideId, endOdometer, paymentMethod, endOdometerU
     const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
 
     // Calculate fare
-    const isDistanceBased = ['oneWay', 'roundTrip', 'localDriverAllowance'].includes(ride.tripType);
-    const isDurationBased = ride.tripType === 'localHourly';
-    let totalAmount = 0;
+    // User request: "make sure the extra are added with the initial full fare"
+    let totalAmount = Number(ride.totalAmount) || Number(ride.baseFare) || 0;
+    console.log(`[DEBUG] Solo Initial Full Fare as Base quote: ${totalAmount}`);
 
-    if (isDistanceBased) {
-        const minKmTotal = (Number(ride.minKmPerDay) || 0) * days;
-        const distToCharge = Math.max(actualDistanceKm, minKmTotal);
-        
-        totalAmount = (Number(ride.baseFare) || 0);
-        totalAmount += (distToCharge * (Number(ride.perKmRate) || 0));
-        totalAmount += ((Number(ride.driverAllowance) || 0) * days);
-        totalAmount += ((Number(ride.nightAllowance) || 0) * days);
-        totalAmount += (Number(ride.hillsAllowance) || 0);
-    } else if (isDurationBased) {
-        const ratePerDay = Number(ride.perDayRate) || Number(ride.hourlyRate) || 0;
-        totalAmount = (days * ratePerDay);
-        totalAmount += ((Number(ride.driverAllowance) || 0) * days);
-        totalAmount += ((Number(ride.nightAllowance) || 0) * days);
-        totalAmount += (Number(ride.hillsAllowance) || 0);
-    } else {
-        // Use original estimated total for fixed/package solo rides
-        totalAmount = (Number(ride.totalAmount) || Number(ride.baseFare) || 0);
-    }
-    
     if (ride.waitingTimeMins > 0) {
         totalAmount += (ride.waitingTimeMins * (Number(ride.waitingChargesPerMin) || 0));
     }
@@ -522,6 +519,7 @@ module.exports = {
     getSoloRides,
     getVendorSoloRides,
     getSoloRideById,
+    getSoloRideByTrackingId,
     updateSoloRide,
     startSoloTrip,
     completeSoloTrip,

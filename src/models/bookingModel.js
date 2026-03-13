@@ -573,9 +573,10 @@ const startTrip = async (bookingId, startOdometer, otp, startOdometerUrl) => {
     // First verify OTP
     const booking = await getBookingById(bookingId);
     if (!booking) throw new Error('Booking not found');
-    // RELAXED OTP CHECK FOR DEVELOPMENT (User Request)
-    // if (booking.otp !== otp) throw new Error('Invalid OTP');
+    
+    // Strict OTP Validation
     if (!otp || otp.length !== 4) throw new Error('OTP must be 4 digits');
+    if (booking.otp !== otp) throw new Error('Invalid OTP. Please check with customer.');
     
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
@@ -645,13 +646,9 @@ const completeTrip = async (bookingId, endOdometer, paymentMethod, endOdometerUr
     // 2. For Duration-based trips (localHourly/Rental), recalculate from days * perDayRate + allowances.
     // 3. For fixed/package trips, use original estimatedFare (agreed total) as base and only add on-trip extras.
     
-    // Use the initial agreed quote as the base total amount
+    // user request: "make sure the extra are added with the initial full fare"
     let totalAmount = Number(booking.estimatedFare) || Number(booking.fare) || 0;
-    
-    // Only if it's a variable distance trip AND actual distance exceeds estimated distance by a significant margin, 
-    // we could potentially add more KM, but for now we simplify to respect the initial quote as base + extras.
-    // This is the "Initial amount there" requested.
-    console.log(`[DEBUG] Base quote for calculation: ${totalAmount}`);
+    console.log(`[DEBUG] Initial Full Fare as Base quote: ${totalAmount}`);
     
     // 4. Waiting Charges (use waitingChargesPerMin or waitingCharges field)
     const waitingRatePerMin = Number(booking.waitingChargesPerMin) || Number(booking.waitingCharges) || 0;
@@ -844,26 +841,72 @@ const updateBooking = async (bookingId, updates) => {
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
     
-    Object.keys(updates).forEach((key, index) => {
+    // Convert empty strings to null (DynamoDB throws an error on empty strings)
+    Object.keys(updates).forEach(key => {
+        if (updates[key] === "") {
+            updates[key] = null;
+        }
+    });
+    
+    // Prevent overlapping path errors
+    delete updates.updatedAt;
+    delete updates.createdAt;
+    delete updates.id;
+    delete updates.vendorId;
+    
+    // Filter out undefined values and reserved update keys
+    const validUpdates = Object.keys(updates).filter(key => {
+        return updates[key] !== undefined && 
+               key !== 'updatedAt' && 
+               key !== 'createdAt' && 
+               key !== 'id' && 
+               key !== 'vendorId';
+    });
+    
+    const setExpressions = [];
+    const removeExpressions = [];
+    
+    validUpdates.forEach((key, index) => {
         const attrName = `#attr${index}`;
-        const attrValue = `:val${index}`;
-        updateExpressions.push(`${attrName} = ${attrValue}`);
         expressionAttributeNames[attrName] = key;
-        expressionAttributeValues[attrValue] = updates[key];
+        
+        if (updates[key] === null) {
+            removeExpressions.push(attrName);
+        } else {
+            const attrValue = `:val${index}`;
+            setExpressions.push(`${attrName} = ${attrValue}`);
+            expressionAttributeValues[attrValue] = updates[key];
+        }
     });
     
     // Add updatedAt
-    updateExpressions.push('#updatedAt = :updatedAt');
+    setExpressions.push('#updatedAt = :updatedAt');
     expressionAttributeNames['#updatedAt'] = 'updatedAt';
     expressionAttributeValues[':updatedAt'] = new Date().toISOString();
     
-    await docClient.send(new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { id: bookingId },
-        UpdateExpression: `SET ${updateExpressions.join(', ')}`,
-        ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: expressionAttributeValues
-    }));
+    let updateExpr = `SET ${setExpressions.join(', ')}`;
+    if (removeExpressions.length > 0) {
+        updateExpr += ` REMOVE ${removeExpressions.join(', ')}`;
+    }
+    
+    try {
+        console.log('--- DYNAMODB UPDATE ATTEMPT ---');
+        console.log('UpdateExpression:', updateExpr);
+        console.log('ExpressionAttributeNames:', expressionAttributeNames);
+        
+        await docClient.send(new UpdateCommand({
+            TableName: TABLE_NAME,
+            Key: { id: bookingId },
+            UpdateExpression: updateExpr,
+            ExpressionAttributeNames: expressionAttributeNames,
+            ExpressionAttributeValues: expressionAttributeValues
+        }));
+    } catch (e) {
+        console.error('DynamoDB Update Error:', e.name, e.message);
+        console.error('Update Params:', JSON.stringify(expressionAttributeValues, null, 2));
+        require('fs').appendFileSync('update_trip_error.log', `${new Date().toISOString()} - ${e.stack}\nPARAMS: ${JSON.stringify(expressionAttributeValues)}\n`);
+        throw new Error(`DB Error: ${e.message}`);
+    }
     
     return await getBookingById(bookingId);
 };

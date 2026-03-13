@@ -462,6 +462,7 @@ router.put('/trips/:id', authMiddleware, vendorOnly, async (req, res) => {
         });
     } catch (error) {
         console.error('Update trip error:', error);
+        require('fs').appendFileSync('vendor_route_error.log', `${new Date().toISOString()} - Update Trip Error: ${error.stack}\n`);
         res.status(500).json({
             success: false,
             message: 'Failed to update trip',
@@ -611,10 +612,10 @@ router.delete('/trips/:id', authMiddleware, vendorOnly, async (req, res) => {
             });
         }
         
-        if (trip.status !== 'draft') {
+        if (!['draft', 'pending', 'cancelled'].includes(trip.status)) {
             return res.status(400).json({
                 success: false,
-                message: 'Only draft trips can be deleted'
+                message: 'Only draft, pending, or cancelled trips can be deleted'
             });
         }
         

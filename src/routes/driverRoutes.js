@@ -533,6 +533,20 @@ router.post('/solo-trip', authMiddleware, driverOnly, async (req, res) => {
 
         const ride = await createSoloRide(req.body, driver);
         
+        // Send WhatsApp SMS with tracking link and OTP
+        if (ride.customerPhone && ride.otp) {
+            try {
+                const whatsappService = require('../services/whatsappService');
+                const trackingUrl = `${req.protocol}://${req.get('host')}/track/${ride.trackingId}`;
+                
+                const customMessage = `*UTurn Self Drive*\nYour trip has been scheduled by driver ${driver.name}.\n\n*OTP to Start Ride:* ${ride.otp}\n\n*Track your ride live:* \n${trackingUrl}\n\nThank you for choosing UTurn!`;
+                
+                await whatsappService.sendWhatsApp(ride.customerPhone, customMessage);
+            } catch (smsErr) {
+                console.error('Failed to send WhatsApp SMS for Solo Ride:', smsErr);
+            }
+        }
+        
         res.json({
             success: true,
             message: 'Solo ride created successfully',
@@ -558,6 +572,40 @@ router.get('/solo-trips', authMiddleware, driverOnly, async (req, res) => {
     } catch (error) {
         console.error('Get solo rides error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch solo rides', error: error.message });
+    }
+});
+
+// Cancel Solo Trip (Before Start)
+router.post('/solo-trip/:id/cancel', authMiddleware, driverOnly, async (req, res) => {
+    try {
+        const { getSoloRideById, updateSoloRide } = require('../models/soloRideModel');
+        const ride = await getSoloRideById(req.params.id);
+        
+        if (!ride) {
+            return res.status(404).json({ success: false, message: 'Ride not found' });
+        }
+        
+        if (ride.driverId !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+
+        if (['started', 'in_progress', 'completed', 'cancelled'].includes(ride.status)) {
+            return res.status(400).json({ success: false, message: 'Cannot cancel a ride that is already ' + ride.status });
+        }
+
+        const updated = await updateSoloRide(ride.id, {
+            status: 'cancelled',
+            updatedAt: new Date().toISOString()
+        });
+
+        res.json({
+            success: true,
+            message: 'Ride cancelled successfully',
+            data: updated
+        });
+    } catch (error) {
+        console.error('Cancel solo ride error:', error);
+        res.status(500).json({ success: false, message: 'Failed to cancel solo ride', error: error.message });
     }
 });
 

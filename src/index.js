@@ -21,6 +21,7 @@ const rateCardRoutes = require('./routes/rateCardRoutes');
 const marketplaceRequestRoutes = require('./routes/marketplaceRequestRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const jobRoutes = require('./routes/jobRoutes');
 
 // Import database setup
 const { setupTables } = require('./utils/dbSetup');
@@ -78,6 +79,7 @@ app.use('/api/rate-cards', rateCardRoutes);
 app.use('/api/marketplace-requests', marketplaceRequestRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/jobs', jobRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
