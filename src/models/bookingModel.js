@@ -551,7 +551,7 @@ const rejectDriver = async (bookingId, reason) => {
  * Generate and save OTP for trip start
  */
 const generateTripOTP = async (bookingId) => {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+    const otp = Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit OTP
     
     await docClient.send(new UpdateCommand({
         TableName: TABLE_NAME,
