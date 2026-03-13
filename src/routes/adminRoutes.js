@@ -1123,4 +1123,96 @@ router.delete('/purge-test-data', authMiddleware, adminOnly, async (req, res) =>
     }
 });
 
+// ==================== SYSTEM SETTINGS ====================
+const { GetCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
+
+// Get system settings
+router.get('/system-settings', authMiddleware, adminOnly, async (req, res) => {
+    try {
+        const result = await docClient.send(new GetCommand({
+            TableName: TABLES.SYSTEM_SETTINGS,
+            Key: { id: 'system-config' }
+        }));
+        res.json({ success: true, data: result.Item || { id: 'system-config', vehicleTypes: [] } });
+    } catch (error) {
+        // Table might not exist yet, return defaults
+        res.json({ success: true, data: { id: 'system-config', vehicleTypes: [] } });
+    }
+});
+
+// Update system settings
+router.put('/system-settings', authMiddleware, adminOnly, checkPermission('settings'), async (req, res) => {
+    try {
+        const settings = req.body;
+        settings.id = 'system-config';
+        settings.updatedAt = new Date().toISOString();
+        settings.updatedBy = req.user.username;
+
+        await docClient.send(new PutCommand({
+            TableName: TABLES.SYSTEM_SETTINGS,
+            Item: settings
+        }));
+
+        await adminModel.logAction(req.user.id, req.user.username, 'UPDATE_SETTINGS', { fields: Object.keys(settings) });
+        res.json({ success: true, message: 'Settings updated', data: settings });
+    } catch (error) {
+        console.error('Update settings error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update settings' });
+    }
+});
+
+// Get vehicle types (public - used by driver/vendor apps)
+router.get('/vehicle-types', async (req, res) => {
+    try {
+        const result = await docClient.send(new GetCommand({
+            TableName: TABLES.SYSTEM_SETTINGS,
+            Key: { id: 'vehicle-types' }
+        }));
+        
+        if (result.Item && result.Item.types) {
+            res.json({ success: true, data: result.Item.types });
+        } else {
+            // Return default vehicle types
+            const defaults = [
+                { name: 'Bike', category: 'Passenger', order: 1, seats: 1, active: true },
+                { name: 'Auto', category: 'Passenger', order: 2, seats: 3, active: true },
+                { name: 'Hatchback', category: 'Passenger', order: 3, seats: 4, active: true },
+                { name: 'Sedan', category: 'Passenger', order: 4, seats: 4, active: true },
+                { name: 'SUV', category: 'Passenger', order: 5, seats: 6, active: true },
+                { name: 'Tempo Traveller', category: 'Passenger', order: 6, seats: 12, active: true },
+                { name: 'Mini Truck', category: 'Load', order: 1, capacity: '1 Ton', active: true },
+                { name: 'Tata Ace', category: 'Load', order: 2, capacity: '1 Ton', active: true },
+                { name: 'Pickup', category: 'Load', order: 3, capacity: '2 Ton', active: true },
+                { name: 'Truck', category: 'Load', order: 4, capacity: '5 Ton', active: true },
+            ];
+            res.json({ success: true, data: defaults });
+        }
+    } catch (error) {
+        res.json({ success: true, data: [] });
+    }
+});
+
+// Save vehicle types (admin only)
+router.put('/vehicle-types', authMiddleware, adminOnly, checkPermission('settings'), async (req, res) => {
+    try {
+        const { types } = req.body;
+        
+        await docClient.send(new PutCommand({
+            TableName: TABLES.SYSTEM_SETTINGS,
+            Item: {
+                id: 'vehicle-types',
+                types: types,
+                updatedAt: new Date().toISOString(),
+                updatedBy: req.user.username
+            }
+        }));
+
+        await adminModel.logAction(req.user.id, req.user.username, 'UPDATE_VEHICLE_TYPES', { count: types.length });
+        res.json({ success: true, message: 'Vehicle types updated', data: types });
+    } catch (error) {
+        console.error('Update vehicle types error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update vehicle types' });
+    }
+});
+
 module.exports = router;

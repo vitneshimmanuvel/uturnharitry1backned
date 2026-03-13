@@ -50,6 +50,7 @@ const TABLES = {
   WALLET: "UTurnWallet",
   ADMINS: "uturn-admins",
   ADMIN_LOGS: "uturn-admin-logs",
+  SYSTEM_SETTINGS: "uturn-system-settings",
 };
 
 // Alias for TABLE_NAMES
