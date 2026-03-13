@@ -363,7 +363,7 @@
           <h1>🚗 UTurn Ride</h1>
           <p>Your ride details</p>
           <span class="booking-id" id="bookingId">--</span>
-          <div>
+          <div id="sosContainer" style="display: none;">
             <a href="tel:100" class="sos-btn">
               <span class="sos-icon">🚨</span> SOS EMERGENCY
             </a>
@@ -534,18 +534,29 @@
         statusBadge.textContent = formatStatus(booking.status);
         statusBadge.className = `status-badge status-${booking.status}`;
 
-        // OTP Banner (Only before ride starts)
+        // OTP Banner (Only before ride starts - show for all pre-ride statuses)
         const otpBanner = document.getElementById("otpBanner");
-        if ((booking.status === "driver_assigned" || booking.status === "driver_approved" || booking.status === "arrived" || booking.status === "confirmed" || booking.status === "pending") && booking.otp) {
+        const preRideStatuses = ['pending', 'driver_accepted', 'vendor_approved', 'confirmed', 'arrived'];
+        if (preRideStatuses.includes(booking.status) && booking.otp) {
           otpBanner.style.display = "block";
           document.getElementById("startOtp").textContent = booking.otp;
         } else {
           otpBanner.style.display = "none";
         }
 
-        // Live Stats Component (Only when ride is in progress)
+        // SOS Button (Only when ride is in progress or dropped)
+        const sosContainer = document.getElementById("sosContainer");
+        const activeRideStatuses = ['in_progress', 'in_transit', 'started', 'dropped'];
+        if (activeRideStatuses.includes(booking.status)) {
+          sosContainer.style.display = "block";
+        } else {
+          sosContainer.style.display = "none";
+        }
+
+        // Live Stats Component (When ride is in progress or dropped)
         const liveStatsContainer = document.getElementById("liveStatsContainer");
-        if (booking.status === "in_transit" || booking.status === "started" || booking.status === "in_progress") {
+        const liveStatuses = ['in_progress', 'in_transit', 'started', 'dropped'];
+        if (liveStatuses.includes(booking.status)) {
           liveStatsContainer.style.display = "grid";
           
           if (liveTimerInterval) clearInterval(liveTimerInterval);
@@ -554,11 +565,13 @@
             const startTimeMs = new Date(booking.startTime).getTime();
             const nowMs = new Date().getTime();
             const travelMinutes = Math.floor((nowMs - startTimeMs) / 60000);
-            document.getElementById("liveTravelTime").textContent = travelMinutes > 0 ? `${travelMinutes}m` : '0m';
+            const hours = Math.floor(travelMinutes / 60);
+            const mins = travelMinutes % 60;
+            document.getElementById("liveTravelTime").textContent = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
           };
           
           updateTravelTime();
-          liveTimerInterval = setInterval(updateTravelTime, 60000); // Update every minute
+          liveTimerInterval = setInterval(updateTravelTime, 30000); // Update every 30 seconds
           
           // Waiting Time display
           document.getElementById("liveWaitingTime").textContent = `${booking.waitingTimeMins || 0}m`;
@@ -735,14 +748,18 @@
 
       function formatStatus(status) {
         const statusMap = {
-          pending: "⏳ Pending",
+          pending: "⏳ Looking for Driver",
+          driver_accepted: "🙋 Driver Accepted",
+          vendor_approved: "✅ Driver Approved",
           confirmed: "✅ Trip Confirmed",
-          driver_assigned: "✅ Driver Assigned",
-          driver_approved: "🚗 Driver Approved",
+          arrived: "📍 Driver Arrived",
           started: "🛣️ Trip Started",
-          in_progress: "🛣️ In Progress",
+          in_progress: "🛣️ On the Way",
           in_transit: "🛣️ In Transit",
+          dropped: "🏁 Reached Destination",
           completed: "✔️ Completed",
+          payment_verification_pending: "💳 Payment Verification",
+          commission_pending: "💰 Commission Pending",
           closed: "✔️ Closed",
           cancelled: "❌ Cancelled",
         };

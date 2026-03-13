@@ -949,7 +949,7 @@ router.get('/track/:trackingId', async (req, res) => {
         }
         
         // Check if ride is closed (completed or cancelled)
-        const isClosed = ['completed', 'cancelled'].includes(booking.status);
+        const isClosed = ['completed', 'cancelled', 'payment_verification_pending', 'commission_pending', 'commission_verification_pending'].includes(booking.status);
         
         // Return limited data for privacy
         const trackingData = {
@@ -971,6 +971,7 @@ router.get('/track/:trackingId', async (req, res) => {
             distanceKm: booking.distanceKm,
             estimatedDurationMins: booking.estimatedDurationMins,
             packageAmount: booking.packageAmount,
+            baseFare: booking.baseFare,
             estimatedFare: booking.estimatedFare,
             waitingCharges: booking.waitingTimeMins ? (booking.waitingTimeMins * (booking.waitingChargesPerMin || booking.waitingCharges || (booking.waitingChargesPerHour / 60) || 0)) : 0,
             totalAmount: booking.totalAmount,
@@ -978,14 +979,14 @@ router.get('/track/:trackingId', async (req, res) => {
             endTime: booking.endTime,
             waitingTimeMins: booking.waitingTimeMins || 0,
             otp: booking.otp,
-            // Only show driver details if approved (not for pending/cancelled)
-            driverName: booking.status !== 'pending' && booking.status !== 'cancelled' ? booking.driverName : null,
-            vehicleNumber: booking.status !== 'pending' && booking.status !== 'cancelled' ? booking.vehicleNumber : null,
-            driverPhone: booking.status !== 'pending' && booking.status !== 'cancelled' && booking.driverPhone 
+            // Only show driver details if a driver has actually been assigned
+            driverName: booking.driverName || null,
+            vehicleNumber: booking.vehicleNumber || null,
+            driverPhone: booking.driverPhone
                 ? `+91 XXXXX ${booking.driverPhone?.slice(-4) || ''}` 
                 : null,
             // Expiry message for closed rides
-            closedMessage: booking.status === 'completed' 
+            closedMessage: booking.status === 'completed' || booking.status === 'payment_verification_pending' || booking.status === 'commission_pending'
                 ? 'This ride has been completed. Thank you for traveling with UTurn!'
                 : booking.status === 'cancelled'
                 ? 'This ride was cancelled.'
